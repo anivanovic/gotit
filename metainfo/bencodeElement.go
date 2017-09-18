@@ -1,5 +1,10 @@
 package metainfo
 
+import (
+	"fmt"
+	"strconv"
+)
+
 type bencode interface {
 	Type() string
 	GetData() string
@@ -26,11 +31,11 @@ func (bencode IntElement) Type() string {
 }
 
 func (bencode IntElement) GetData() string {
-	return string(bencode.value)
+	return strconv.Itoa(bencode.value)
 }
 
 type ListElement struct {
-	elements []string
+	elements []bencode
 }
 
 func (bencode ListElement) Type() string {
@@ -41,14 +46,17 @@ func (bencode ListElement) GetData() string {
 	data := "["
 	
 	for i := 0; i < len(bencode.elements); i++ {
-		data += bencode.elements[i] + ", "
+		if bencode.elements[i] == nil {
+			fmt.Println("element nil: ", i)
+		}
+		data += bencode.elements[i].GetData() + ", "
 	}
 	
 	return data[:len(data) - 2] + "]"
 }
 
 type DictElement struct {
-	dictMap map[string]string
+	dict map[StringElement]bencode
 }
 
 func (bencode DictElement) Type() string {
@@ -56,9 +64,19 @@ func (bencode DictElement) Type() string {
 }
 
 func (bencode DictElement) GetData() string {
-	return ""
+	return bencode.printValue(bencode, "\t")
 }
 
-
-
-
+func (bencode DictElement) printValue(value bencode, tabs string) string {
+	dict, ok := value.(DictElement)
+	if ok {
+		var data = "{\n"
+		for k, v := range dict.dict {
+			data += tabs + k.GetData() + ": " + bencode.printValue(v, tabs + "\t") + "\n"
+		}
+		
+		return data + "}\n"
+	} else {
+		return value.GetData()
+	}
+}

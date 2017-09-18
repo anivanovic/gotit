@@ -15,74 +15,70 @@ func CheckError(e error) {
 }
 
 
-func Decode(data string, printStr string, tab string) (string, string) {
+func Decode(data string) (string, bencode) {
 	startTag := string(data[0])
 	
 	switch startTag {
 	case "l":
-		return readList(data, printStr, tab)
+		return readList(data)
 	case "d":
-		return readDict(data, printStr, tab)
+		return readDict(data)
 	case "i":
-		return readInt(data, printStr)
+		return readInt(data)
 	default:
-		return readString(data, printStr)
+		return readString(data)
 	}
 }
 
-func readInt(data string, printStr string) (string, string) {
+func readInt(data string) (string, IntElement) {
 	valueEndIndex := strings.Index(data, "e")
 	value := data[1:valueEndIndex]
+	intVal, _ := strconv.Atoi(value);
 	
-	printStr += value
+	i := IntElement{value: intVal}
 	
-	return data[valueEndIndex + 1:], printStr
+	return data[valueEndIndex + 1:], i
 }
 
-func readString(data string, printStr string) (string, string) {
+func readString(data string) (string, StringElement) {
 	stringValueIndex := strings.Index(data, ":") + 1
 	
 	valueLen, _ := strconv.Atoi(data[:stringValueIndex - 1])
 	value := data[stringValueIndex:stringValueIndex + valueLen]
-	printStr += "\"" + value + "\""
+	s := StringElement{value: value}
 	
-	return data[stringValueIndex + valueLen:], printStr
+	return data[stringValueIndex + valueLen:], s
 }
 
-func readList(data string, printStr string, tab string) (string, string) {
+func readList(data string) (string, ListElement) {
 	data = data[1:] // remove first l
 	
-	printStr += "[\n"
-	tab += "\t"
+	bencodeList := make([]bencode, 0)
+	var element bencode
 	for strings.Index(data, "e") != 0 {
-		printStr += tab
-		data, printStr = Decode(data, printStr, tab)
-		printStr += ",\n"
+		data, element = Decode(data)
+		if element == nil {
+			fmt.Println("citanje nil element")
+		}
+		bencodeList = append(bencodeList, element)
 	}
-	printStr = printStr[:len(printStr) - 2]
-	tab = tab[: len(tab) - 1]
-	printStr += "\n" + tab + "]"
 	
-	return data[1:], printStr
+	return data[1:], ListElement{elements: bencodeList}
 }
 
-func readDict(data string, printStr string, tab string) (string, string) {
+func readDict(data string) (string, DictElement) {
 	data = data[1:] // remove firs d
 	
-	printStr += "{\n"
-	tab += "\t"
+	dict := make(map[StringElement]bencode)
+	var k StringElement
+	var v bencode
 	for strings.Index(data, "e") != 0 {
-		printStr += tab
-		data, printStr = Decode(data, printStr, tab)
-		printStr += " : "
-		data, printStr = Decode(data, printStr, tab)
-		printStr += ",\n"
+		data, k = readString(data)
+		data, v = Decode(data)
+		dict[k] = v
 	}
-	tab = tab[:len(tab) - 1]
-	printStr = printStr[:len(printStr) - 2]
-	printStr += "\n" + tab + "}"
 	
-	return data[1:], printStr
+	return data[1:], DictElement{dict: dict}
 }
 
 
