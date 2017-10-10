@@ -44,15 +44,15 @@ func (bencode ListElement) Type() string {
 
 func (bencode ListElement) GetData() string {
 	data := "["
-	
+
 	for i := 0; i < len(bencode.elements); i++ {
 		if bencode.elements[i] == nil {
 			fmt.Println("element nil: ", i)
 		}
 		data += bencode.elements[i].GetData() + ", "
 	}
-	
-	return data[:len(data) - 2] + "]"
+
+	return data[:len(data)-2] + "]"
 }
 
 type DictElement struct {
@@ -72,9 +72,9 @@ func (bencode DictElement) printValue(value bencode, tabs string) string {
 	if ok {
 		var data = "{\n"
 		for k, v := range dict.dict {
-			data += tabs + k.GetData() + ": " + bencode.printValue(v, tabs + "\t") + "\n"
+			data += tabs + k.GetData() + ": " + bencode.printValue(v, tabs+"\t") + "\n"
 		}
-		
+
 		return data + "}\n"
 	} else {
 		return value.GetData()
