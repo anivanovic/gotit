@@ -107,6 +107,7 @@ func readConn(conn net.Conn) []byte {
 	tmp := make([]byte, bytes.MinRead)
 
 	for {
+		conn.SetDeadline(time.Now().Add(time.Second * 5))
 		n, err := conn.Read(tmp)
 		if err != nil {
 			CheckError(err)
@@ -136,7 +137,7 @@ func readResponse(response []byte) {
 }
 
 func main() {
-	fileTor, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/Wonder Woman (2017) [720p] [YTS.AG].torrent")
+	fileTor, _ := ioutil.ReadFile("C:/Users/eaneivc/Downloads/Wonder Woman (2017) [720p] [YTS.AG].torrent")
 	fmt.Println("-------------------------------------------------------------------------------------")
 	torrent := string(fileTor)
 	_, benDict := metainfo.Decode(torrent)
@@ -162,8 +163,6 @@ func main() {
 
 	defer Conn.Close()
 
-	Conn.SetDeadline(time.Now().Add(time.Second * time.Duration(5)))
-
 	request := new(bytes.Buffer)
 	p := make([]byte, 16)
 
@@ -175,6 +174,7 @@ func main() {
 	binary.Write(request, binary.BigEndian, action)
 	binary.Write(request, binary.BigEndian, transaction_id)
 
+	Conn.SetDeadline(time.Now().Add(time.Second * time.Duration(5)))
 	Conn.WriteTo(request.Bytes(), udpAddr)
 	length, _, err := Conn.ReadFromUDP(p)
 
@@ -206,6 +206,7 @@ func main() {
 	binary.Write(request, binary.BigEndian, int32(-1))
 	binary.Write(request, binary.BigEndian, uint16(6679))
 
+	Conn.SetDeadline(time.Now().Add(time.Second * time.Duration(5)))
 	Conn.WriteTo(request.Bytes(), udpAddr)
 	fmt.Println("Send announce")
 	response := make([]byte, 0, 4096)
@@ -214,6 +215,7 @@ func main() {
 	fmt.Println("reading")
 
 	for {
+		Conn.SetDeadline(time.Now().Add(time.Second * time.Duration(5)))
 		n, err := Conn.Read(tmp)
 		if err != nil {
 			CheckError(err)
@@ -260,14 +262,14 @@ func main() {
 	//ip := ips[read]
 	//port := ports[read]
 	//tcpAddr, _ := net.ResolveTCPAddr("tcp", "92.36.128.234:20337")
-	tcpAddr, _ := net.ResolveTCPAddr("tcp", "118.210.231.161:17230")
+	tcpAddr, _ := net.ResolveTCPAddr("tcp", "2.51.233.37:46425")
 	conn, err := net.DialTCP("tcp", nil, tcpAddr)
 	CheckError(err)
 
-	conn.SetDeadline(time.Now().Add(time.Second * 5))
 	defer conn.Close()
 	if conn != nil {
 		fmt.Println("writing to tcp socket")
+		conn.SetDeadline(time.Now().Add(time.Second * 5))		
 		conn.Write(request.Bytes())
 		fmt.Println(len(request.Bytes()), "bytes written")
 	}
@@ -287,6 +289,8 @@ func main() {
 
 	interestedM := createInterestedMessage()
 	fmt.Println("Sending interested message")
+	
+	conn.SetDeadline(time.Now().Add(time.Second * 5))
 	conn.Write(interestedM)
 
 	fmt.Println("ReadingResponse")
@@ -296,6 +300,7 @@ func main() {
 
 	for i := 0; i < 32; i++ {
 		fmt.Print("\rRequesting piece 0 and block", i)
+		conn.SetDeadline(time.Now().Add(time.Second * 5))
 		conn.Write(createRequestMessage(0, i*blockLength))
 		readResponse(readConn(conn))
 	}
