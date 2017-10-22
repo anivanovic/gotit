@@ -1,6 +1,7 @@
 package metainfo
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -26,6 +27,16 @@ func Decode(data string) (string, bencode) {
 		return readInt(data)
 	default:
 		return readString(data)
+	}
+}
+
+func Parse(data string) (error, *DictElement) {
+	_, bencode := Decode(data)
+
+	if benDict, ok := bencode.(DictElement); ok {
+		return nil, &benDict
+	} else {
+		return errors.New("Invalid torrent file"), nil
 	}
 }
 
@@ -79,8 +90,3 @@ func readDict(data string) (string, DictElement) {
 
 	return data[1:], DictElement{dict: dict}
 }
-
-
-
-
-

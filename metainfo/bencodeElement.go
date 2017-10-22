@@ -3,6 +3,7 @@ package metainfo
 import (
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 type bencode interface {
@@ -79,4 +80,21 @@ func (bencode DictElement) printValue(value bencode, tabs string) string {
 	} else {
 		return value.GetData()
 	}
+}
+
+func (dict DictElement) Value(key string) string {
+	keys := strings.Split(key, ".")
+
+	var element bencode
+	element = dict
+	for _, key := range keys {
+		benKey := StringElement{key}
+		if castDict, ok := element.(DictElement); ok {
+			element = castDict.dict[benKey]
+		} else {
+			element = nil
+		}
+	}
+
+	return element.GetData()
 }
