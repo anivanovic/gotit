@@ -15,6 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"strconv"
+
+	"os"
+
 	"github.com/anivanovic/goTit/metainfo"
 )
 
@@ -103,6 +107,15 @@ func createCancleMessage(pieceIdx int) []byte {
 	return message.Bytes()
 }
 
+func writeToFile(data []byte) {
+	file, err := os.Create("C:/Users/Antonije/Desktop/peer.txt")
+	CheckError(err)
+
+	defer file.Close()
+	file.Write(data)
+	file.Sync()
+}
+
 func readConn(conn net.Conn) []byte {
 	response := make([]byte, 0, 4096)
 	tmp := make([]byte, bytes.MinRead)
@@ -186,8 +199,27 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 		bytes.Compare(sentPeerId, peerId) != 0
 }
 
+func createAnnounc(connId uint64, hash, peerId []byte) *bytes.Buffer {
+	request := new(bytes.Buffer)
+	binary.Write(request, binary.BigEndian, connId)
+	binary.Write(request, binary.BigEndian, uint32(1))
+	binary.Write(request, binary.BigEndian, uint32(127545))
+	binary.Write(request, binary.BigEndian, hash)
+	binary.Write(request, binary.BigEndian, peerId)
+	binary.Write(request, binary.BigEndian, uint64(0))
+	binary.Write(request, binary.BigEndian, uint64(960989559))
+	binary.Write(request, binary.BigEndian, uint64(0))
+	binary.Write(request, binary.BigEndian, uint32(2))
+	binary.Write(request, binary.BigEndian, uint32(0))
+	randKey := rand.Int31()
+	binary.Write(request, binary.BigEndian, randKey)
+	binary.Write(request, binary.BigEndian, int32(-1))
+	binary.Write(request, binary.BigEndian, uint16(6679))
+	return request
+}
+
 func main() {
-	fileTor, _ := ioutil.ReadFile("C:/Users/eaneivc/Downloads/Wonder Woman (2017) [720p] [YTS.AG].torrent")
+	fileTor, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/Wonder Woman (2017) [720p] [YTS.AG].torrent")
 	fmt.Println("-------------------------------------------------------------------------------------")
 	torrent := string(fileTor)
 	_, benDict := metainfo.Parse(torrent)
@@ -217,10 +249,10 @@ func main() {
 	p := make([]byte, 16)
 
 	var action uint32 = 0
-	var connection_id uint64 = 0x41727101980
+	var protocol_id uint64 = 0x41727101980
 	transaction_id := uint32(12398636)
 
-	binary.Write(request, binary.BigEndian, connection_id)
+	binary.Write(request, binary.BigEndian, protocol_id)
 	binary.Write(request, binary.BigEndian, action)
 	binary.Write(request, binary.BigEndian, transaction_id)
 
@@ -239,22 +271,8 @@ func main() {
 	connId := binary.BigEndian.Uint64(p[8:16])
 	fmt.Println("rsponse: ", connVar, transResp, connId)
 
-	request = new(bytes.Buffer)
-	binary.Write(request, binary.BigEndian, connId)
-	binary.Write(request, binary.BigEndian, uint32(1))
-	binary.Write(request, binary.BigEndian, uint32(127545))
-	binary.Write(request, binary.BigEndian, hash)
 	peerId := randStringBytes(20)
-	binary.Write(request, binary.BigEndian, peerId)
-	binary.Write(request, binary.BigEndian, uint64(0))
-	binary.Write(request, binary.BigEndian, uint64(960989559))
-	binary.Write(request, binary.BigEndian, uint64(0))
-	binary.Write(request, binary.BigEndian, uint32(0))
-	binary.Write(request, binary.BigEndian, uint32(0))
-	randKey := rand.Int31()
-	binary.Write(request, binary.BigEndian, randKey)
-	binary.Write(request, binary.BigEndian, int32(-1))
-	binary.Write(request, binary.BigEndian, uint16(6679))
+	request = createAnnounc(connId, hash, peerId)
 
 	Conn.SetDeadline(time.Now().Add(time.Second * time.Duration(5)))
 	Conn.WriteTo(request.Bytes(), udpAddr)
@@ -276,6 +294,7 @@ func main() {
 	}
 	fmt.Println("READ")
 	fmt.Println("Dohvaćeno podataka ", len(response))
+	writeToFile(response)
 
 	resCode := binary.BigEndian.Uint32(response[:4])
 	transaction_id = binary.BigEndian.Uint32(response[4:8])
@@ -284,8 +303,7 @@ func main() {
 	seaders := binary.BigEndian.Uint32(response[16:20])
 	peerCount := (len(response) - 20) / 6
 	peerAddresses := response[20:]
-	ports := make([]uint16, 0)
-	ips := make([]net.IP, 0)
+	ips := make([]string, 0)
 	fmt.Println("Peer count ", peerCount)
 	fmt.Println("response code ", resCode, transaction_id, interval, leachers, seaders)
 
@@ -294,55 +312,53 @@ func main() {
 
 		ipAddress := net.IPv4(peerAddresses[byteMask*read], response[byteMask*read+1], response[byteMask*read+2], response[byteMask*read+3])
 		port := binary.BigEndian.Uint16(response[byteMask*read+4 : byteMask*read+6])
-		ports = append(ports, port)
-		ips = append(ips, ipAddress)
+		ips = append(ips, ipAddress.String()+":"+strconv.Itoa(int(port)))
 	}
 
-	//fmt.Println(ports)
 	//fmt.Println(ips)
 
-	//	for read := 0; read < len(ips); read++ {
 	handhake := createHandshake(hash, peerId)
+	for i := range ips {
+
+		conn, err := net.DialTimeout("tcp", ips[i], time.Millisecond*500)
+		CheckError(err)
+
+		if conn != nil {
+			defer conn.Close()
+
+			fmt.Println("writing to tcp socket")
+			conn.SetDeadline(time.Now().Add(time.Second * 1))
+			conn.Write(handhake)
+			fmt.Println(len(handhake), "bytes written")
+
+			response = readConn(conn)
+
+			read := len(response)
+			fmt.Println("Read all data", read)
+			valid := checkHandshake(response, hash, peerId)
+
+			if !valid {
+				continue
+			}
+
+			readResponse(response[68:])
+
+			interestedM := createInterestedMessage()
+			fmt.Println("Sending interested message")
+
+			conn.SetDeadline(time.Now().Add(time.Second * 5))
+			conn.Write(interestedM)
+
+			fmt.Println("ReadingResponse")
+			response = readConn(conn)
+			fmt.Println("Read all data", len(response))
+			readResponse(response)
+		}
+	}
 
 	//ip := ips[read]
 	//port := ports[read]
 	//tcpAddr, _ := net.ResolveTCPAddr("tcp", "92.36.128.234:20337")
-	tcpAddr, _ := net.ResolveTCPAddr("tcp", "109.182.237.147:58261")
-	conn, err := net.DialTCP("tcp", nil, tcpAddr)
-	CheckError(err)
-	time.Sleep(time.Second * 2)
-
-	defer conn.Close()
-	if conn != nil {
-		fmt.Println("writing to tcp socket")
-		conn.SetDeadline(time.Now().Add(time.Second * 5))
-		conn.Write(handhake)
-		fmt.Println(len(handhake), "bytes written")
-	}
-
-	time.Sleep(time.Second * 2)
-	response = readConn(conn)
-
-	read := len(response)
-	fmt.Println("Read all data", read)
-	valid := checkHandshake(response, hash, peerId)
-
-	if !valid {
-		return
-	}
-
-	readResponse(response[68:])
-
-	interestedM := createInterestedMessage()
-	fmt.Println("Sending interested message")
-
-	conn.SetDeadline(time.Now().Add(time.Second * 5))
-	conn.Write(interestedM)
-
-	fmt.Println("ReadingResponse")
-	response = readConn(conn)
-	fmt.Println("Read all data", len(response))
-	readResponse(response)
 
 	//	for i := 0; i < 32; i++ {
 	//		fmt.Print("\rRequesting piece 0 and block", i)
