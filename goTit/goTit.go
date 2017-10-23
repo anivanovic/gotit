@@ -355,21 +355,24 @@ func main() {
 			conn.SetDeadline(time.Now().Add(time.Second * 5))
 			conn.Write(interestedM)
 
-			fmt.Println("ReadingResponse")
+			fmt.Println("Reading Response")
 			response = readConn(conn)
 			fmt.Println("Read all data", len(response))
-			readResponse(response)
+			if len(response) == 0 {
+				continue
+			}
+			peerMessages := readResponse(response)
+
+			message := peerMessages[0]
+			if message.code == unchoke {
+				for i := 0; i < 32; i++ {
+					fmt.Print("\rRequesting piece 0 and block", i)
+					conn.SetDeadline(time.Now().Add(time.Second * 5))
+					conn.Write(createRequestMessage(0, i*blockLength))
+					time.Sleep(time.Second * 4)
+					readResponse(readConn(conn))
+				}
+			}
 		}
 	}
-
-	//ip := ips[read]
-	//port := ports[read]
-	//tcpAddr, _ := net.ResolveTCPAddr("tcp", "92.36.128.234:20337")
-
-	//	for i := 0; i < 32; i++ {
-	//		fmt.Print("\rRequesting piece 0 and block", i)
-	//		conn.SetDeadline(time.Now().Add(time.Second * 5))
-	//		conn.Write(createRequestMessage(0, i*blockLength))
-	//		readResponse(readConn(conn))
-	//	}
 }
