@@ -108,7 +108,7 @@ func createCancleMessage(pieceIdx int) []byte {
 }
 
 func writeToFile(data []byte) {
-	file, err := os.Create("C:/Users/Antonije/Desktop/peer.txt")
+	file, err := os.OpenFile("C:/Users/Antonije/Desktop/peer.txt", os.O_APPEND|os.O_WRONLY, 0600)
 	CheckError(err)
 
 	defer file.Close()
@@ -118,7 +118,7 @@ func writeToFile(data []byte) {
 
 func readConn(conn net.Conn) []byte {
 	response := make([]byte, 0, 4096)
-	tmp := make([]byte, bytes.MinRead)
+	tmp := make([]byte, 4096)
 
 	for {
 		conn.SetDeadline(time.Now().Add(time.Second * 5))
@@ -127,7 +127,7 @@ func readConn(conn net.Conn) []byte {
 			CheckError(err)
 			break
 		}
-		fmt.Println("Read data from peer ", n)
+		fmt.Println("Read data from ", n)
 		response = append(response, tmp[:n]...)
 	}
 
@@ -199,7 +199,7 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 		bytes.Compare(sentPeerId, peerId) != 0
 }
 
-func createAnnounc(connId uint64, hash, peerId []byte) *bytes.Buffer {
+func createAnnounce(connId uint64, hash, peerId []byte) *bytes.Buffer {
 	request := new(bytes.Buffer)
 	binary.Write(request, binary.BigEndian, connId)
 	binary.Write(request, binary.BigEndian, uint32(1))
@@ -209,13 +209,49 @@ func createAnnounc(connId uint64, hash, peerId []byte) *bytes.Buffer {
 	binary.Write(request, binary.BigEndian, uint64(0))
 	binary.Write(request, binary.BigEndian, uint64(960989559))
 	binary.Write(request, binary.BigEndian, uint64(0))
-	binary.Write(request, binary.BigEndian, uint32(2))
+	binary.Write(request, binary.BigEndian, uint32(0))
 	binary.Write(request, binary.BigEndian, uint32(0))
 	randKey := rand.Int31()
 	binary.Write(request, binary.BigEndian, randKey)
 	binary.Write(request, binary.BigEndian, int32(-1))
 	binary.Write(request, binary.BigEndian, uint16(6679))
 	return request
+}
+
+func createScrape(connId uint64, hash []byte) *bytes.Buffer {
+	scrape := new(bytes.Buffer)
+	binary.Write(scrape, binary.BigEndian, connId)
+	binary.Write(scrape, binary.BigEndian, uint32(2))
+	binary.Write(scrape, binary.BigEndian, uint32(127545))
+	binary.Write(scrape, binary.BigEndian, hash)
+	return scrape
+}
+
+func readAnnounceResponse(response []byte, transaction_id uint32) map[string]bool {
+	fmt.Println("Dohvaćeno podataka ", len(response))
+	if len(response) < 21 {
+		return nil
+	}
+	resCode := binary.BigEndian.Uint32(response[:4])
+	transaction_id = binary.BigEndian.Uint32(response[4:8])
+	interval := binary.BigEndian.Uint32(response[8:12])
+	leachers := binary.BigEndian.Uint32(response[12:16])
+	seaders := binary.BigEndian.Uint32(response[16:20])
+	peerCount := (len(response) - 20) / 6
+	peerAddresses := response[20:]
+
+	ips := make(map[string]bool, 0)
+	fmt.Println("Peer count ", peerCount)
+	fmt.Println("response code ", resCode, transaction_id, interval, leachers, seaders)
+	for read := 0; read < peerCount; read++ {
+		byteMask := 6
+
+		ipAddress := net.IPv4(peerAddresses[byteMask*read], peerAddresses[byteMask*read+1], peerAddresses[byteMask*read+2], peerAddresses[byteMask*read+3])
+		port := binary.BigEndian.Uint16(peerAddresses[byteMask*read+4 : byteMask*read+6])
+		ipAddr := ipAddress.String() + ":" + strconv.Itoa(int(port))
+		ips[ipAddr] = true
+	}
+	return ips
 }
 
 func main() {
@@ -269,58 +305,28 @@ func main() {
 	connVar := binary.BigEndian.Uint32(p[:4])
 	transResp := binary.BigEndian.Uint32(p[4:8])
 	connId := binary.BigEndian.Uint64(p[8:16])
-	fmt.Println("rsponse: ", connVar, transResp, connId)
+	fmt.Println("response: ", connVar, transResp, connId)
 
 	peerId := randStringBytes(20)
-	request = createAnnounc(connId, hash, peerId)
+	request = createAnnounce(connId, hash, peerId)
 
 	Conn.SetDeadline(time.Now().Add(time.Second * time.Duration(5)))
 	Conn.WriteTo(request.Bytes(), udpAddr)
 	fmt.Println("Send announce")
-	response := make([]byte, 0, 4096)
-	tmp := make([]byte, 4096)
 
-	fmt.Println("reading")
+	response := readConn(Conn)
+	ips := readAnnounceResponse(response, transaction_id)
 
-	for {
-		Conn.SetDeadline(time.Now().Add(time.Second * time.Duration(5)))
-		n, err := Conn.Read(tmp)
-		if err != nil {
-			CheckError(err)
-			break
-		}
-		response = append(response, tmp[:n]...)
-
+	ipsString := ""
+	for key, _ := range ips {
+		ipsString += key + "\n"
 	}
-	fmt.Println("READ")
-	fmt.Println("Dohvaćeno podataka ", len(response))
-	writeToFile(response)
-
-	resCode := binary.BigEndian.Uint32(response[:4])
-	transaction_id = binary.BigEndian.Uint32(response[4:8])
-	interval := binary.BigEndian.Uint32(response[8:12])
-	leachers := binary.BigEndian.Uint32(response[12:16])
-	seaders := binary.BigEndian.Uint32(response[16:20])
-	peerCount := (len(response) - 20) / 6
-	peerAddresses := response[20:]
-	ips := make([]string, 0)
-	fmt.Println("Peer count ", peerCount)
-	fmt.Println("response code ", resCode, transaction_id, interval, leachers, seaders)
-
-	for read := 0; read < peerCount; read++ {
-		byteMask := 6
-
-		ipAddress := net.IPv4(peerAddresses[byteMask*read], response[byteMask*read+1], response[byteMask*read+2], response[byteMask*read+3])
-		port := binary.BigEndian.Uint16(response[byteMask*read+4 : byteMask*read+6])
-		ips = append(ips, ipAddress.String()+":"+strconv.Itoa(int(port)))
-	}
-
-	//fmt.Println(ips)
+	writeToFile([]byte(ipsString))
 
 	handhake := createHandshake(hash, peerId)
-	for i := range ips {
+	for ip, _ := range ips {
 
-		conn, err := net.DialTimeout("tcp", ips[i], time.Millisecond*500)
+		conn, err := net.DialTimeout("tcp", ip, time.Millisecond*500)
 		CheckError(err)
 
 		if conn != nil {
