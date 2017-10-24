@@ -46,7 +46,7 @@ func randStringBytes(n int) []byte {
 
 func createRequestMessage(piece int, beginOffset int) []byte {
 	message := new(bytes.Buffer)
-	binary.Write(message, binary.BigEndian, uint32(5))
+	binary.Write(message, binary.BigEndian, uint32(13))
 	binary.Write(message, binary.BigEndian, uint8(request))
 	binary.Write(message, binary.BigEndian, uint32(piece))
 	binary.Write(message, binary.BigEndian, uint32(beginOffset))
@@ -165,6 +165,23 @@ func readResponse(response []byte) []peerMessage {
 	}
 
 	return messages
+}
+
+func readPieceResponse(response []byte) {
+	currPossition := 0
+
+	size := int(binary.BigEndian.Uint32(response[currPossition : currPossition+4]))
+	currPossition += 4
+	fmt.Println("size", size)
+	message := NewPeerMessage(response[currPossition : currPossition+size])
+	fmt.Println("message type:", message.code)
+	currPossition += 1
+	indx := binary.BigEndian.Uint32(response[currPossition : currPossition+4])
+	currPossition += 4
+	offset := binary.BigEndian.Uint32(response[currPossition : currPossition+4])
+	currPossition += 4
+	fmt.Println("index", indx, "offset", offset)
+	fmt.Printf("payload %b\n", response[currPossition:])
 }
 
 func createHandshake(hash []byte, peerId []byte) []byte {
@@ -324,6 +341,8 @@ func main() {
 	writeToFile([]byte(ipsString))
 
 	handhake := createHandshake(hash, peerId)
+
+IP_LOOP:
 	for ip, _ := range ips {
 
 		conn, err := net.DialTimeout("tcp", ip, time.Millisecond*500)
@@ -358,6 +377,10 @@ func main() {
 			fmt.Println("Reading Response")
 			response = readConn(conn)
 			fmt.Println("Read all data", len(response))
+			for i := 0; len(response) == 0 && i < 5; i++ {
+				time.Sleep(time.Second * 5)
+				response = readConn(conn)
+			}
 			if len(response) == 0 {
 				continue
 			}
@@ -369,8 +392,16 @@ func main() {
 					fmt.Print("\rRequesting piece 0 and block", i)
 					conn.SetDeadline(time.Now().Add(time.Second * 5))
 					conn.Write(createRequestMessage(0, i*blockLength))
-					time.Sleep(time.Second * 4)
-					readResponse(readConn(conn))
+
+					response = readConn(conn)
+					for i := 0; len(response) == 0 && i < 5; i++ {
+						time.Sleep(time.Second * 5)
+						response = readConn(conn)
+					}
+					if len(response) == 0 {
+						continue IP_LOOP
+					}
+					readPieceResponse(response)
 				}
 			}
 		}
