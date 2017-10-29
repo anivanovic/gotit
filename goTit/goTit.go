@@ -24,11 +24,11 @@ import (
 
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-const blockLength = 2 ^ 14
+const blockLength uint32 = 16 * 1024
 
 var BITTORENT_PROT = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
 
-const peerPort = 8999
+const listenPort uint16 = 8999
 
 func CheckError(err error) {
 	if err != nil {
@@ -167,7 +167,7 @@ func readResponse(response []byte) []peerMessage {
 	return messages
 }
 
-func readPieceResponse(response []byte) {
+func readPieceResponse(response []byte, conn net.Conn) {
 	currPossition := 0
 
 	size := int(binary.BigEndian.Uint32(response[currPossition : currPossition+4]))
@@ -175,13 +175,18 @@ func readPieceResponse(response []byte) {
 	fmt.Println("size", size)
 	message := NewPeerMessage(response[currPossition : currPossition+size])
 	fmt.Println("message type:", message.code)
-	currPossition += 1
-	indx := binary.BigEndian.Uint32(response[currPossition : currPossition+4])
-	currPossition += 4
-	offset := binary.BigEndian.Uint32(response[currPossition : currPossition+4])
-	currPossition += 4
+
+	indx := binary.BigEndian.Uint32(message.payload[:4])
+	offset := binary.BigEndian.Uint32(message.payload[4:8])
 	fmt.Println("index", indx, "offset", offset)
-	fmt.Printf("payload %b\n", response[currPossition:])
+	fmt.Printf("payload %b\n", message.payload[8:])
+
+	pieceSize := len(message.payload[8:])
+	for pieceSize != int(blockLength) {
+		response = readConn(conn)
+		pieceSize += len(response)
+		fmt.Printf("payload %b\n", response)
+	}
 }
 
 func createHandshake(hash []byte, peerId []byte) []byte {
@@ -231,7 +236,7 @@ func createAnnounce(connId uint64, hash, peerId []byte) *bytes.Buffer {
 	randKey := rand.Int31()
 	binary.Write(request, binary.BigEndian, randKey)
 	binary.Write(request, binary.BigEndian, int32(-1))
-	binary.Write(request, binary.BigEndian, uint16(6679))
+	binary.Write(request, binary.BigEndian, listenPort)
 	return request
 }
 
@@ -375,7 +380,15 @@ IP_LOOP:
 			conn.Write(interestedM)
 
 			fmt.Println("Reading Response")
+			//WAIT:
 			response = readConn(conn)
+
+			// keepalive message
+			//if len(response) == 0 {
+			//	time.Sleep(time.Minute * 1)
+			//	goto WAIT
+			//}
+
 			fmt.Println("Read all data", len(response))
 			for i := 0; len(response) == 0 && i < 5; i++ {
 				time.Sleep(time.Second * 5)
@@ -391,7 +404,7 @@ IP_LOOP:
 				for i := 0; i < 32; i++ {
 					fmt.Print("\rRequesting piece 0 and block", i)
 					conn.SetDeadline(time.Now().Add(time.Second * 5))
-					conn.Write(createRequestMessage(0, i*blockLength))
+					conn.Write(createRequestMessage(0, i*int(blockLength)))
 
 					response = readConn(conn)
 					for i := 0; len(response) == 0 && i < 5; i++ {
@@ -401,7 +414,7 @@ IP_LOOP:
 					if len(response) == 0 {
 						continue IP_LOOP
 					}
-					readPieceResponse(response)
+					readPieceResponse(response, conn)
 				}
 			}
 		}
