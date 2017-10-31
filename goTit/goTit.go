@@ -17,8 +17,6 @@ import (
 
 	"strconv"
 
-	"os"
-
 	"github.com/anivanovic/goTit/metainfo"
 )
 
@@ -105,15 +103,6 @@ func createCancleMessage(pieceIdx int) []byte {
 	binary.Write(message, binary.BigEndian, uint32(pieceIdx))
 
 	return message.Bytes()
-}
-
-func writeToFile(data []byte) {
-	file, err := os.OpenFile("C:/Users/Antonije/Desktop/peer.txt", os.O_APPEND|os.O_WRONLY, 0600)
-	CheckError(err)
-
-	defer file.Close()
-	file.Write(data)
-	file.Sync()
 }
 
 func readConn(conn net.Conn) []byte {
@@ -221,34 +210,6 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 		bytes.Compare(sentPeerId, peerId) != 0
 }
 
-func createAnnounce(connId uint64, hash, peerId []byte) *bytes.Buffer {
-	request := new(bytes.Buffer)
-	binary.Write(request, binary.BigEndian, connId)
-	binary.Write(request, binary.BigEndian, uint32(1))
-	binary.Write(request, binary.BigEndian, uint32(127545))
-	binary.Write(request, binary.BigEndian, hash)
-	binary.Write(request, binary.BigEndian, peerId)
-	binary.Write(request, binary.BigEndian, uint64(0))
-	binary.Write(request, binary.BigEndian, uint64(960989559))
-	binary.Write(request, binary.BigEndian, uint64(0))
-	binary.Write(request, binary.BigEndian, uint32(0))
-	binary.Write(request, binary.BigEndian, uint32(0))
-	randKey := rand.Int31()
-	binary.Write(request, binary.BigEndian, randKey)
-	binary.Write(request, binary.BigEndian, int32(-1))
-	binary.Write(request, binary.BigEndian, listenPort)
-	return request
-}
-
-func createScrape(connId uint64, hash []byte) *bytes.Buffer {
-	scrape := new(bytes.Buffer)
-	binary.Write(scrape, binary.BigEndian, connId)
-	binary.Write(scrape, binary.BigEndian, uint32(2))
-	binary.Write(scrape, binary.BigEndian, uint32(127545))
-	binary.Write(scrape, binary.BigEndian, hash)
-	return scrape
-}
-
 func readAnnounceResponse(response []byte, transaction_id uint32) map[string]bool {
 	fmt.Println("Dohvaćeno podataka ", len(response))
 	if len(response) < 21 {
@@ -283,6 +244,7 @@ func main() {
 	_, benDict := metainfo.Parse(torrent)
 	fmt.Println(benDict.GetData())
 
+	// TODO move to bendict geting torrent info
 	infoDict := torrent[strings.Index(torrent, "4:info")+6 : len(torrent)-1]
 	sha := sha1.New()
 	sha.Write([]byte(string(infoDict)))
@@ -303,47 +265,12 @@ func main() {
 
 	defer Conn.Close()
 
-	request := new(bytes.Buffer)
-	p := make([]byte, 16)
-
-	var action uint32 = 0
-	var protocol_id uint64 = 0x41727101980
-	transaction_id := uint32(12398636)
-
-	binary.Write(request, binary.BigEndian, protocol_id)
-	binary.Write(request, binary.BigEndian, action)
-	binary.Write(request, binary.BigEndian, transaction_id)
-
-	Conn.SetDeadline(time.Now().Add(time.Second * time.Duration(5)))
-	Conn.WriteTo(request.Bytes(), udpAddr)
-	length, _, err := Conn.ReadFromUDP(p)
-
-	CheckError(err)
-
-	fmt.Println("read response")
-	if length == 16 {
-		fmt.Println("Read 16 bites")
-	}
-	connVar := binary.BigEndian.Uint32(p[:4])
-	transResp := binary.BigEndian.Uint32(p[4:8])
-	connId := binary.BigEndian.Uint64(p[8:16])
-	fmt.Println("response: ", connVar, transResp, connId)
+	transactionId := uint32(12345612)
+	tracker := new(Tracker)
+	connId := tracker.Handshake(transactionId, Conn, udpAddr)
 
 	peerId := randStringBytes(20)
-	request = createAnnounce(connId, hash, peerId)
-
-	Conn.SetDeadline(time.Now().Add(time.Second * time.Duration(5)))
-	Conn.WriteTo(request.Bytes(), udpAddr)
-	fmt.Println("Send announce")
-
-	response := readConn(Conn)
-	ips := readAnnounceResponse(response, transaction_id)
-
-	ipsString := ""
-	for key, _ := range ips {
-		ipsString += key + "\n"
-	}
-	writeToFile([]byte(ipsString))
+	ips := tracker.Announce(connId, hash, Conn, udpAddr, transactionId, peerId)
 
 	handhake := createHandshake(hash, peerId)
 
@@ -361,7 +288,7 @@ IP_LOOP:
 			conn.Write(handhake)
 			fmt.Println(len(handhake), "bytes written")
 
-			response = readConn(conn)
+			response := readConn(conn)
 
 			read := len(response)
 			fmt.Println("Read all data", read)
