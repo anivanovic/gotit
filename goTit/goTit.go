@@ -238,22 +238,26 @@ func readAnnounceResponse(response []byte, transaction_id uint32) map[string]boo
 }
 
 func main() {
-	fileTor, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/Wonder Woman (2017) [720p] [YTS.AG].torrent")
+	torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/Wonder Woman (2017) [720p] [YTS.AG].torrent")
 	fmt.Println("-------------------------------------------------------------------------------------")
-	torrent := string(fileTor)
+	torrent := string(torrentContent)
 	_, benDict := metainfo.Parse(torrent)
-	fmt.Println(benDict.GetData())
+	fmt.Println(benDict.String())
 
 	// TODO move to bendict geting torrent info
 	infoDict := torrent[strings.Index(torrent, "4:info")+6 : len(torrent)-1]
+	fmt.Println("WORKING ------------------------------------------------")
+	fmt.Println(infoDict)
+	fmt.Println("NOT WORKING --------------------------------------------")
+	fmt.Println(benDict.Value("info").Encode())
 	sha := sha1.New()
-	sha.Write([]byte(string(infoDict)))
+	sha.Write([]byte(infoDict))
 
 	var hash []byte
 	hash = sha.Sum(nil)
 	fmt.Printf("info hash: %x\n", hash)
 
-	u, err := url.Parse(benDict.Value("announce"))
+	u, err := url.Parse(benDict.Value("announce").String())
 	CheckError(err)
 
 	udpAddr, err := net.ResolveUDPAddr("udp", u.Host)

@@ -7,14 +7,6 @@ import (
 	"strings"
 )
 
-func CheckError(e error) {
-	if e != nil {
-		panic(e)
-	} else {
-		fmt.Println("nothing here")
-	}
-}
-
 func Decode(data string) (string, bencode) {
 	startTag := string(data[0])
 
@@ -73,7 +65,7 @@ func readList(data string) (string, ListElement) {
 		bencodeList = append(bencodeList, element)
 	}
 
-	return data[1:], ListElement{elements: bencodeList}
+	return data[1:], ListElement{value: bencodeList}
 }
 
 func readDict(data string) (string, DictElement) {
