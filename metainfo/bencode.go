@@ -53,7 +53,7 @@ func readString(data string) (string, StringElement) {
 }
 
 func readList(data string) (string, ListElement) {
-	data = data[1:] // remove first l
+	data = data[1:] // remove l
 
 	bencodeList := make([]bencode, 0)
 	var element bencode
@@ -69,16 +69,18 @@ func readList(data string) (string, ListElement) {
 }
 
 func readDict(data string) (string, DictElement) {
-	data = data[1:] // remove firs d
+	data = data[1:] // remove d
 
 	dict := make(map[StringElement]bencode)
+	order := make([]StringElement, 0)
 	var k StringElement
 	var v bencode
 	for strings.Index(data, "e") != 0 {
 		data, k = readString(data)
 		data, v = Decode(data)
 		dict[k] = v
+		order = append(order, k)
 	}
 
-	return data[1:], DictElement{dict: dict}
+	return data[1:], DictElement{dict: dict, order: order}
 }

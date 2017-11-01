@@ -12,7 +12,6 @@ import (
 	"crypto/sha1"
 	"net"
 	"net/url"
-	"strings"
 	"time"
 
 	"strconv"
@@ -244,14 +243,9 @@ func main() {
 	_, benDict := metainfo.Parse(torrent)
 	fmt.Println(benDict.String())
 
-	// TODO move to bendict geting torrent info
-	infoDict := torrent[strings.Index(torrent, "4:info")+6 : len(torrent)-1]
-	fmt.Println("WORKING ------------------------------------------------")
-	fmt.Println(infoDict)
-	fmt.Println("NOT WORKING --------------------------------------------")
-	fmt.Println(benDict.Value("info").Encode())
+	info := benDict.Value("info").Encode()
 	sha := sha1.New()
-	sha.Write([]byte(infoDict))
+	sha.Write([]byte(info))
 
 	var hash []byte
 	hash = sha.Sum(nil)
