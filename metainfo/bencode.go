@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-func Decode(data string) (string, bencode) {
+func Decode(data string) (string, Bencode) {
 	startTag := string(data[0])
 
 	switch startTag {
@@ -37,7 +37,7 @@ func readInt(data string) (string, IntElement) {
 	value := data[1:valueEndIndex]
 	intVal, _ := strconv.Atoi(value)
 
-	i := IntElement{value: intVal}
+	i := IntElement{Value: intVal}
 
 	return data[valueEndIndex+1:], i
 }
@@ -47,7 +47,7 @@ func readString(data string) (string, StringElement) {
 
 	valueLen, _ := strconv.Atoi(data[:stringValueIndex-1])
 	value := data[stringValueIndex : stringValueIndex+valueLen]
-	s := StringElement{value: value}
+	s := StringElement{Value: value}
 
 	return data[stringValueIndex+valueLen:], s
 }
@@ -55,8 +55,8 @@ func readString(data string) (string, StringElement) {
 func readList(data string) (string, ListElement) {
 	data = data[1:] // remove l
 
-	bencodeList := make([]bencode, 0)
-	var element bencode
+	bencodeList := make([]Bencode, 0)
+	var element Bencode
 	for strings.Index(data, "e") != 0 {
 		data, element = Decode(data)
 		if element == nil {
@@ -65,16 +65,16 @@ func readList(data string) (string, ListElement) {
 		bencodeList = append(bencodeList, element)
 	}
 
-	return data[1:], ListElement{value: bencodeList}
+	return data[1:], ListElement{List: bencodeList}
 }
 
 func readDict(data string) (string, DictElement) {
 	data = data[1:] // remove d
 
-	dict := make(map[StringElement]bencode)
+	dict := make(map[StringElement]Bencode)
 	order := make([]StringElement, 0)
 	var k StringElement
-	var v bencode
+	var v Bencode
 	for strings.Index(data, "e") != 0 {
 		data, k = readString(data)
 		data, v = Decode(data)
@@ -82,5 +82,5 @@ func readDict(data string) (string, DictElement) {
 		order = append(order, k)
 	}
 
-	return data[1:], DictElement{dict: dict, order: order}
+	return data[1:], DictElement{Dict: dict, order: order}
 }
