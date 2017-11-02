@@ -6,17 +6,31 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	url2 "net/url"
 	"time"
 )
 
-const timeout = time.Second * 5
+const timeout = time.Millisecond * 100
 const protocol_id uint64 = 0x41727101980
 
-type Tracker struct {
-	url string
+type tracker struct {
+	Url  *url2.URL
+	Conn *net.UDPConn
+	addr *net.UDPAddr
 }
 
-func (tracker Tracker) Handshake(transactionId uint32, Conn *net.UDPConn, addr *net.UDPAddr) uint64 {
+func Tracker(url *url2.URL) *tracker {
+	addr, err := net.ResolveUDPAddr(url.Scheme, url.Host)
+	CheckError(err)
+
+	conn, err := net.ListenUDP(url.Scheme, nil)
+	CheckError(err)
+
+	tracker := tracker{url, conn, addr}
+	return &tracker
+}
+
+func (t tracker) Handshake(transactionId uint32) uint64 {
 	request := new(bytes.Buffer)
 	var action uint32 = 0
 
@@ -24,11 +38,11 @@ func (tracker Tracker) Handshake(transactionId uint32, Conn *net.UDPConn, addr *
 	binary.Write(request, binary.BigEndian, action)
 	binary.Write(request, binary.BigEndian, transactionId)
 
-	Conn.SetDeadline(time.Now().Add(timeout))
-	Conn.WriteTo(request.Bytes(), addr)
+	t.Conn.SetDeadline(time.Now().Add(timeout))
+	t.Conn.WriteTo(request.Bytes(), t.addr)
 
 	p := make([]byte, 16)
-	length, _, err := Conn.ReadFromUDP(p)
+	length, _, err := t.Conn.ReadFromUDP(p)
 
 	CheckError(err)
 
@@ -45,6 +59,7 @@ func (tracker Tracker) Handshake(transactionId uint32, Conn *net.UDPConn, addr *
 }
 
 func createAnnounce(connId uint64, hash, peerId []byte) *bytes.Buffer {
+	//TODO move torrent data to torrent file
 	request := new(bytes.Buffer)
 	binary.Write(request, binary.BigEndian, connId)
 	binary.Write(request, binary.BigEndian, uint32(1))
@@ -63,12 +78,16 @@ func createAnnounce(connId uint64, hash, peerId []byte) *bytes.Buffer {
 	return request
 }
 
-func (tracker Tracker) Announce(connId uint64, hash []byte, Conn *net.UDPConn, udpAddr *net.UDPAddr, transactionId uint32, peerId []byte) map[string]bool {
+func (t tracker) Announce(connId uint64, hash []byte, transactionId uint32, peerId []byte) *map[string]bool {
 	request := createAnnounce(connId, hash, peerId)
-	Conn.SetDeadline(time.Now().Add(timeout))
-	Conn.WriteTo(request.Bytes(), udpAddr)
+	t.Conn.SetDeadline(time.Now().Add(timeout))
+	t.Conn.WriteTo(request.Bytes(), t.addr)
 	fmt.Println("Send announce")
-	response := readConn(Conn)
+	response := readConn(t.Conn)
 	ips := readAnnounceResponse(response, transactionId)
-	return ips
+	return &ips
+}
+
+func (t tracker) Close() {
+	t.Conn.Close()
 }

@@ -20,7 +20,6 @@ import (
 )
 
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
 const blockLength uint32 = 16 * 1024
 
 var BITTORENT_PROT = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
@@ -109,7 +108,7 @@ func readConn(conn net.Conn) []byte {
 	tmp := make([]byte, 4096)
 
 	for {
-		conn.SetDeadline(time.Now().Add(time.Second * 5))
+		conn.SetDeadline(time.Now().Add(timeout))
 		n, err := conn.Read(tmp)
 		if err != nil {
 			CheckError(err)
@@ -125,7 +124,7 @@ func readConn(conn net.Conn) []byte {
 func readHandshake(conn net.Conn) []byte {
 	response := make([]byte, 0, 68)
 
-	conn.SetDeadline(time.Now().Add(time.Second * 5))
+	conn.SetDeadline(time.Now().Add(timeout))
 	n, err := conn.Read(response)
 	if err != nil {
 		CheckError(err)
@@ -241,7 +240,6 @@ func main() {
 	fmt.Println("-------------------------------------------------------------------------------------")
 	torrent := string(torrentContent)
 	_, benDict := metainfo.Parse(torrent)
-	fmt.Println(benDict.String())
 
 	info := benDict.Value("info").Encode()
 	sha := sha1.New()
@@ -249,28 +247,32 @@ func main() {
 
 	var hash []byte
 	hash = sha.Sum(nil)
-	fmt.Printf("info hash: %x\n", hash)
-
-	u, err := url.Parse(benDict.Value("announce").String())
-	CheckError(err)
-
-	udpAddr, err := net.ResolveUDPAddr("udp", u.Host)
-	fmt.Println("Connecting to: " + u.Host)
-	CheckError(err)
-
-	Conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 6679})
-	CheckError(err)
-
-	defer Conn.Close()
 
 	transactionId := uint32(12345612)
-	tracker := new(Tracker)
-	connId := tracker.Handshake(transactionId, Conn, udpAddr)
-
 	peerId := randStringBytes(20)
-	ips := tracker.Announce(connId, hash, Conn, udpAddr, transactionId, peerId)
+
+	trackers := benDict.Value("announce-list")
+	listElement := trackers.(metainfo.ListElement)
+	listElement.List = append(listElement.List, benDict.Value("announce"))
+	ips := make(map[string]bool)
+	for _, tracker := range listElement.List {
+		var trackerUrl string
+		if listTracker, ok := tracker.(metainfo.ListElement); ok {
+			trackerUrl = listTracker.List[0].String()
+		} else {
+			trackerUrl = tracker.String()
+		}
+
+		u, err := url.Parse(trackerUrl)
+		CheckError(err)
+		tracker_ips := announce(u, transactionId, hash, peerId)
+		for k, v := range *tracker_ips {
+			ips[k] = v
+		}
+	}
 
 	handhake := createHandshake(hash, peerId)
+	fmt.Println("peers size in pool", len(ips))
 
 IP_LOOP:
 	for ip, _ := range ips {
@@ -301,7 +303,7 @@ IP_LOOP:
 			interestedM := createInterestedMessage()
 			fmt.Println("Sending interested message")
 
-			conn.SetDeadline(time.Now().Add(time.Second * 5))
+			conn.SetDeadline(time.Now().Add(timeout))
 			conn.Write(interestedM)
 
 			fmt.Println("Reading Response")
@@ -316,7 +318,7 @@ IP_LOOP:
 
 			fmt.Println("Read all data", len(response))
 			for i := 0; len(response) == 0 && i < 5; i++ {
-				time.Sleep(time.Second * 5)
+				time.Sleep(timeout)
 				response = readConn(conn)
 			}
 			if len(response) == 0 {
@@ -328,7 +330,7 @@ IP_LOOP:
 			if message.code == unchoke {
 				for i := 0; i < 32; i++ {
 					fmt.Print("\rRequesting piece 0 and block", i)
-					conn.SetDeadline(time.Now().Add(time.Second * 5))
+					conn.SetDeadline(time.Now().Add(timeout))
 					conn.Write(createRequestMessage(0, i*int(blockLength)))
 
 					response = readConn(conn)
@@ -344,4 +346,12 @@ IP_LOOP:
 			}
 		}
 	}
+}
+
+func announce(u *url.URL, transactionId uint32, hash []byte, peerId []byte) *map[string]bool {
+	tracker := Tracker(u)
+	defer tracker.Close()
+	connId := tracker.Handshake(transactionId)
+	ips := tracker.Announce(connId, hash, transactionId, peerId)
+	return ips
 }
