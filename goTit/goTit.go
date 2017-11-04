@@ -208,33 +208,6 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 		bytes.Compare(sentPeerId, peerId) != 0
 }
 
-func readAnnounceResponse(response []byte, transaction_id uint32) map[string]bool {
-	fmt.Println("Dohvaćeno podataka ", len(response))
-	if len(response) < 21 {
-		return nil
-	}
-	resCode := binary.BigEndian.Uint32(response[:4])
-	transaction_id = binary.BigEndian.Uint32(response[4:8])
-	interval := binary.BigEndian.Uint32(response[8:12])
-	leachers := binary.BigEndian.Uint32(response[12:16])
-	seaders := binary.BigEndian.Uint32(response[16:20])
-	peerCount := (len(response) - 20) / 6
-	peerAddresses := response[20:]
-
-	ips := make(map[string]bool, 0)
-	fmt.Println("Peer count ", peerCount)
-	fmt.Println("response code ", resCode, transaction_id, interval, leachers, seaders)
-	for read := 0; read < peerCount; read++ {
-		byteMask := 6
-
-		ipAddress := net.IPv4(peerAddresses[byteMask*read], peerAddresses[byteMask*read+1], peerAddresses[byteMask*read+2], peerAddresses[byteMask*read+3])
-		port := binary.BigEndian.Uint16(peerAddresses[byteMask*read+4 : byteMask*read+6])
-		ipAddr := ipAddress.String() + ":" + strconv.Itoa(int(port))
-		ips[ipAddr] = true
-	}
-	return ips
-}
-
 func main() {
 	torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/Wonder Woman (2017) [720p] [YTS.AG].torrent")
 	fmt.Println("-------------------------------------------------------------------------------------")
