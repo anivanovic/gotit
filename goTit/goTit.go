@@ -13,18 +13,19 @@ import (
 	"net"
 	"net/url"
 	"time"
-
 	"strconv"
 
 	"github.com/anivanovic/goTit/metainfo"
 )
 
-const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-const blockLength uint32 = 16 * 1024
+const (
+	letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	blockLength uint32 = 16 * 1024
+	listenPort uint16 = 8999
+)
 
 var BITTORENT_PROT = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
 
-const listenPort uint16 = 8999
 
 func CheckError(err error) {
 	if err != nil {
@@ -209,10 +210,18 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 }
 
 func main() {
-	torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/Wonder Woman (2017) [720p] [YTS.AG].torrent")
+	torrentContent, _ := ioutil.ReadFile("C:/Users/eaneivc/Downloads/[zooqle.com] Wonder Women 2017 HC HDRip 720p.torrent")
 	fmt.Println("-------------------------------------------------------------------------------------")
-	torrent := string(torrentContent)
-	_, benDict := metainfo.Parse(torrent)
+	torrentString := string(torrentContent)
+	_, benDict := metainfo.Parse(torrentString)
+	fmt.Println(benDict.String())
+	torrent := new(Torrent)
+	torrent.Announce = benDict.Value("announce").String()
+	torrent.CreatedBy = benDict.Value("created by").String()
+	torrent.PieceLength, _ = strconv.Atoi(benDict.Value("info.piece length").String())
+	torrent.Name = benDict.Value("info.name").String()
+	torrent.Pieces = []byte(benDict.Value("info.pieces").String())
+	torrent.CreationDate = benDict.Value("").String()
 
 	info := benDict.Value("info").Encode()
 	sha := sha1.New()
@@ -225,6 +234,15 @@ func main() {
 	peerId := randStringBytes(20)
 
 	trackers := benDict.Value("announce-list")
+	trackersList, _ := trackers.(metainfo.ListElement)
+	
+	announceList := make([]string)
+	for elem := range trackersList.List {
+		elemList, _ := elem.(metainfo.ListElement)
+		announceList = append(announceList, elemList.List[0])
+	}
+	torrent.Announce_list = announceList
+	
 	listElement := trackers.(metainfo.ListElement)
 	listElement.List = append(listElement.List, benDict.Value("announce"))
 	ips := make(map[string]bool)
