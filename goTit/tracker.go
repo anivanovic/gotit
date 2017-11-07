@@ -7,11 +7,11 @@ import (
 	"math/rand"
 	"net"
 	url2 "net/url"
-	"time"
 	"strconv"
+	"time"
 )
 
-const timeout = time.Millisecond * 100
+const timeout = time.Millisecond * 2000
 const protocol_id uint64 = 0x41727101980
 
 type tracker struct {
