@@ -5,8 +5,16 @@ import (
 
 	"crypto/sha1"
 
+	"bytes"
+	"encoding/binary"
+
+	"sync"
+
+	"github.com/anivanovic/goTit/bitset"
 	"github.com/anivanovic/goTit/metainfo"
 )
+
+var BITTORENT_PROT = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
 
 type Torrent struct {
 	Announce      string
@@ -22,6 +30,9 @@ type Torrent struct {
 	Info          string
 	Comment       string
 	IsDirectory   bool
+
+	bitfieldGuard sync.Mutex
+	Bitset        bitset.BitSet
 }
 
 type TorrentFile struct {
@@ -84,4 +95,26 @@ func NewTorrent(dictElement metainfo.DictElement) *Torrent {
 	}
 
 	return torrent
+}
+
+func (torrent Torrent) CreateHandshake(peerId []byte) []byte {
+	request := new(bytes.Buffer)
+	// 19 - as number of letters in protocol type string
+	binary.Write(request, binary.BigEndian, uint8(len(BITTORENT_PROT)))
+	binary.Write(request, binary.BigEndian, BITTORENT_PROT)
+	binary.Write(request, binary.BigEndian, uint64(0))
+	binary.Write(request, binary.BigEndian, torrent.Hash)
+	binary.Write(request, binary.BigEndian, peerId)
+
+	return request.Bytes()
+}
+
+func (torrent Torrent) SetDownloaded(pieceIndx int) {
+	// bit in byte represents piece
+	sliceIndex := pieceIndx / 8
+	shift := uint32((9+pieceIndx)%8 - 1)
+	bitmask := 128 // 0b10000000
+	torrent.bitfieldGuard.Lock()
+	bitmask = bitmask << shift
+	torrent.bitfieldGuard.Unlock()
 }

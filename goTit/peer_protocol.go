@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"time"
 )
 
 const (
@@ -18,6 +19,8 @@ const (
 	piece                // 7
 	cancel               // 8
 )
+
+const blockLength uint32 = 16 * 1024
 
 type peerMessage struct {
 	size    uint32
@@ -115,17 +118,6 @@ func readPieceResponse(response []byte, conn net.Conn) {
 	}
 }
 
-func createHandshake(hash []byte, peerId []byte) []byte {
-	request := new(bytes.Buffer)
-	binary.Write(request, binary.BigEndian, uint8(19))
-	binary.Write(request, binary.BigEndian, BITTORENT_PROT)
-	binary.Write(request, binary.BigEndian, uint64(0))
-	binary.Write(request, binary.BigEndian, hash)
-	binary.Write(request, binary.BigEndian, peerId)
-
-	return request.Bytes()
-}
-
 func checkHandshake(handshake, hash, peerId []byte) bool {
 	if len(handshake) < 68 {
 		return false
@@ -141,8 +133,92 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 	fmt.Printf("info hash: %b\n", sentPeerId)
 
 	return ressCode != 19 ||
-		string(handshake[1:20]) != "Bittorent protocol" ||
+		string(handshake[1:20]) != string(BITTORENT_PROT) ||
 		reservedBytes != 0 ||
 		bytes.Compare(sentHash, hash) != 0 ||
 		bytes.Compare(sentPeerId, peerId) != 0
+}
+
+type Peer struct {
+	Url     string
+	Conn    net.Conn
+	Torrent *Torrent
+}
+
+func (peer Peer) connect() {
+	if peer.Conn == nil {
+		conn, err := net.DialTimeout("tcp", peer.Url, time.Millisecond*1000)
+		CheckError(err)
+		peer.Conn = conn
+	}
+}
+
+func (peer Peer) Announce(peerId []byte) bool {
+	peer.connect()
+
+	fmt.Println("writing to tcp socket")
+	peer.Conn.SetDeadline(time.Now().Add(time.Second * 1))
+
+	handshake := peer.Torrent.CreateHandshake(peerId)
+	peer.Conn.Write(handshake)
+	fmt.Println(len(handshake), "bytes written")
+
+	response := readConn(peer.Conn)
+
+	read := len(response)
+	fmt.Println("Read all data", read)
+	valid := checkHandshake(response, peer.Torrent.Hash, peerId)
+
+	return valid
+}
+
+// Intended to be run in separate goroutin. Communicates with remote peer
+// and downloads torrent
+func (peer Peer) GoMessaging() {
+	readResponse(response[68:])
+
+	interestedM := createInterestedMessage()
+	fmt.Println("Sending interested message")
+
+	peer.Conn.SetDeadline(time.Now().Add(timeout))
+	peer.Conn.Write(interestedM)
+
+	fmt.Println("Reading Response")
+	//WAIT:
+	response = readConn(peer.Conn)
+
+	// keepalive message
+	//if len(response) == 0 {
+	//	time.Sleep(time.Minute * 1)
+	//	goto WAIT
+	//}
+
+	fmt.Println("Read all data", len(response))
+	for i := 0; len(response) == 0 && i < 5; i++ {
+		time.Sleep(timeout)
+		response = readConn(peer.Conn)
+	}
+	if len(response) == 0 {
+		continue
+	}
+	peerMessages := readResponse(response)
+
+	message := peerMessages[0]
+	if message.code == unchoke {
+		for i := 0; i < 32; i++ {
+			fmt.Print("\rRequesting piece 0 and block", i)
+			peer.Conn.SetDeadline(time.Now().Add(timeout))
+			peer.Conn.Write(createRequestMessage(0, i*int(blockLength)))
+
+			response = readConn(peer.Conn)
+			for i := 0; len(response) == 0 && i < 5; i++ {
+				time.Sleep(time.Second * 5)
+				response = readConn(peer.Conn)
+			}
+			if len(response) == 0 {
+				continue IP_LOOP
+			}
+			readPieceResponse(response, peer.Conn)
+		}
+	}
 }

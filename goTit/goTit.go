@@ -16,12 +16,9 @@ import (
 
 const (
 	letterBytes           = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	blockLength    uint32 = 16 * 1024
 	listenPort     uint16 = 8999
 	DownloadFolder        = "C:/Users/Antonije/Downloads/"
 )
-
-var BITTORENT_PROT = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
 
 func CheckError(err error) {
 	if err != nil {
@@ -112,79 +109,14 @@ func main() {
 		}
 	}
 
-	handhake := createHandshake(torrent.Hash, peerId)
 	fmt.Println("peers size in pool", len(ips))
 
-IP_LOOP:
 	for ip, _ := range ips {
 
-		conn, err := net.DialTimeout("tcp", ip, time.Millisecond*1000)
-		CheckError(err)
-
-		if conn != nil {
-			defer conn.Close()
-
-			fmt.Println("writing to tcp socket")
-			conn.SetDeadline(time.Now().Add(time.Second * 1))
-			conn.Write(handhake)
-			fmt.Println(len(handhake), "bytes written")
-
-			response := readConn(conn)
-
-			read := len(response)
-			fmt.Println("Read all data", read)
-			valid := checkHandshake(response, torrent.Hash, peerId)
-
-			if !valid {
-				continue
-			}
-
-			readResponse(response[68:])
-
-			interestedM := createInterestedMessage()
-			fmt.Println("Sending interested message")
-
-			conn.SetDeadline(time.Now().Add(timeout))
-			conn.Write(interestedM)
-
-			fmt.Println("Reading Response")
-			//WAIT:
-			response = readConn(conn)
-
-			// keepalive message
-			//if len(response) == 0 {
-			//	time.Sleep(time.Minute * 1)
-			//	goto WAIT
-			//}
-
-			fmt.Println("Read all data", len(response))
-			for i := 0; len(response) == 0 && i < 5; i++ {
-				time.Sleep(timeout)
-				response = readConn(conn)
-			}
-			if len(response) == 0 {
-				continue
-			}
-			peerMessages := readResponse(response)
-
-			message := peerMessages[0]
-			if message.code == unchoke {
-				for i := 0; i < 32; i++ {
-					fmt.Print("\rRequesting piece 0 and block", i)
-					conn.SetDeadline(time.Now().Add(timeout))
-					conn.Write(createRequestMessage(0, i*int(blockLength)))
-
-					response = readConn(conn)
-					for i := 0; len(response) == 0 && i < 5; i++ {
-						time.Sleep(time.Second * 5)
-						response = readConn(conn)
-					}
-					if len(response) == 0 {
-						continue IP_LOOP
-					}
-					readPieceResponse(response, conn)
-				}
-			}
+		peer := Peer{ip, nil, torrent}
+		connected := peer.Announce(peerId)
+		if connected {
+			go peer.GoMessaging()
 		}
 	}
 }
