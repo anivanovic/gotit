@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -66,25 +65,6 @@ func readHandshake(conn net.Conn) []byte {
 	return response
 }
 
-func readResponse(response []byte) []peerMessage {
-	read := len(response)
-	currPossition := 0
-
-	messages := make([]peerMessage, 0)
-	for currPossition < read {
-		size := int(binary.BigEndian.Uint32(response[currPossition : currPossition+4]))
-		currPossition += 4
-		fmt.Println("size", size)
-		message := NewPeerMessage(response[currPossition : currPossition+size])
-		fmt.Println("message type:", message.code)
-		fmt.Printf("peer has the following peeces %b\n", message.payload)
-		currPossition = currPossition + size
-		messages = append(messages, *message)
-	}
-
-	return messages
-}
-
 func main() {
 	torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/Alien- Covenant (2017) [720p] [YTS.AG].torrent")
 	fmt.Println("-------------------------------------------------------------------------------------")
@@ -113,7 +93,7 @@ func main() {
 
 	for ip, _ := range ips {
 
-		peer := Peer{ip, nil, torrent}
+		peer := NewPeer(ip, torrent)
 		connected := peer.Announce(peerId)
 		if connected {
 			go peer.GoMessaging()

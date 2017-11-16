@@ -7,6 +7,8 @@ import (
 
 	"bytes"
 	"encoding/binary"
+	
+	"math"
 
 	"sync"
 
@@ -23,6 +25,7 @@ type Torrent struct {
 	Length        int
 	PieceLength   int
 	Pieces        []byte
+	PiecesNum     int
 	Files         []TorrentFile
 	Name          string
 	CreationDate  int64
@@ -49,6 +52,7 @@ func NewTorrent(dictElement metainfo.DictElement) *Torrent {
 	torrent.Name = dictElement.Value("info.name").String()
 	torrent.Pieces = []byte(dictElement.Value("info.pieces").String())
 	torrent.CreationDate, _ = strconv.ParseInt(dictElement.Value("creation date").String(), 10, 0)
+	torrent.bitfieldGuard = new(sync.Mutex)
 
 	torrent.Info = dictElement.Value("info").Encode()
 
@@ -93,6 +97,7 @@ func NewTorrent(dictElement metainfo.DictElement) *Torrent {
 	if comment := dictElement.Value("comment"); comment != nil {
 		torrent.Comment = comment.(metainfo.StringElement).Value
 	}
+	torrent.PiecesNum = math.Ceil(float64(torrent.Length)/torrent.PieceLength)
 
 	return torrent
 }
@@ -110,11 +115,7 @@ func (torrent Torrent) CreateHandshake(peerId []byte) []byte {
 }
 
 func (torrent Torrent) SetDownloaded(pieceIndx int) {
-	// bit in byte represents piece
-	sliceIndex := pieceIndx / 8
-	shift := uint32((9+pieceIndx)%8 - 1)
-	bitmask := 128 // 0b10000000
 	torrent.bitfieldGuard.Lock()
-	bitmask = bitmask << shift
+	torrent.Bitset.Set(pieceIndx)
 	torrent.bitfieldGuard.Unlock()
 }

@@ -1,14 +1,12 @@
 package bitset
 
-import "fmt"
-
 type BitSet struct {
-	internal []byte
-	Size     int
+	InternalSet  []byte
+	Size int
 }
 
 func NewBitSet(size int) *BitSet {
-	bitset := BitSet{Size: size, internal: make([]byte, size/8)}
+	bitset := BitSet{Size: size, InternalSet: make([]byte, size/8)}
 	return &bitset
 }
 
@@ -19,13 +17,12 @@ func (bitset BitSet) Unset(indx int) {
 
 	sliceIndex := indx / 8
 	shift := uint32(indx % 8)
-	mask := 128 // 0b10000000
-	mask = mask >> shift
+	// 128 = 0b10000000
+	mask := 128 >> shift
 
-	fmt.Printf("%b", mask)
-	block := bitset.internal[sliceIndex]
+	block := bitset.InternalSet[sliceIndex]
 	block &^= byte(mask)
-	bitset.internal[sliceIndex] = block
+	bitset.InternalSet[sliceIndex] = block
 }
 
 func (bitset BitSet) Set(indx int) {
@@ -35,21 +32,16 @@ func (bitset BitSet) Set(indx int) {
 
 	sliceIndex := indx / 8
 	shift := uint32(indx % 8)
-	mask := 128 // 0b10000000
-	fmt.Printf("mask before %b\n", mask)
-	mask = mask >> shift
+	// 128 = 0b10000000
+	mask := 128 >> shift
 
-	fmt.Printf("mask after %b\n", mask)
-	bitsetBlock := bitset.internal[sliceIndex]
-	fmt.Printf("block before %b\n", bitsetBlock)
+	bitsetBlock := bitset.InternalSet[sliceIndex]
 	bitsetBlock |= byte(mask)
-	fmt.Printf("block after %b\n", bitsetBlock)
-
-	bitset.internal[sliceIndex] = bitsetBlock
+	bitset.InternalSet[sliceIndex] = bitsetBlock
 }
 
 func (bitset BitSet) Get(indx int) bool {
-	block := bitset.internal[indx/8]
+	block := bitset.InternalSet[indx/8]
 	position := uint32(indx % 8)
 	mask := 128 >> position
 	return (block & byte(mask)) > 0

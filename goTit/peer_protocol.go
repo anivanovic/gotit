@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"time"
+	
+	"github.com/anivanovic/goTit/bitset"
 )
 
 const (
@@ -133,7 +135,7 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 	fmt.Printf("info hash: %b\n", sentPeerId)
 
 	return ressCode != 19 ||
-		string(handshake[1:20]) != string(BITTORENT_PROT) ||
+		string(handshake[1:20]) != string(BITTORENT_PROT[:len(BITTORENT_PROT)]) ||
 		reservedBytes != 0 ||
 		bytes.Compare(sentHash, hash) != 0 ||
 		bytes.Compare(sentPeerId, peerId) != 0
@@ -143,6 +145,21 @@ type Peer struct {
 	Url     string
 	Conn    net.Conn
 	Torrent *Torrent
+	Bitset  *bitset.BitSet
+	Status  *PeerStatus
+}
+
+type PeerStatus struct {
+	Choking    bool
+	Interested bool
+}
+
+func newPeerStatus() *PeerStatus {
+	return &PeerStatus{true, false}
+}
+
+func NewPeer(ip string, torrent *Torrent) *Peer {
+	return &Peer{ip, nil, torrent, bitset.NewBitSet(torrent.PiecesNum), newPeerStatus()}
 }
 
 func (peer Peer) connect() {
@@ -168,6 +185,9 @@ func (peer Peer) Announce(peerId []byte) bool {
 	read := len(response)
 	fmt.Println("Read all data", read)
 	valid := checkHandshake(response, peer.Torrent.Hash, peerId)
+	if valid {
+		messages := readResponse(response[68:])
+	}
 
 	return valid
 }
@@ -175,8 +195,6 @@ func (peer Peer) Announce(peerId []byte) bool {
 // Intended to be run in separate goroutin. Communicates with remote peer
 // and downloads torrent
 func (peer Peer) GoMessaging() {
-	readResponse(response[68:])
-
 	interestedM := createInterestedMessage()
 	fmt.Println("Sending interested message")
 
@@ -220,5 +238,48 @@ func (peer Peer) GoMessaging() {
 			}
 			readPieceResponse(response, peer.Conn)
 		}
+	}
+}
+
+func readResponse(response []byte) []peerMessage {
+	read := len(response)
+	currPossition := 0
+
+	messages := make([]peerMessage, 0)
+	for currPossition < read {
+		size := int(binary.BigEndian.Uint32(response[currPossition : currPossition+4]))
+		currPossition += 4
+		fmt.Println("size", size)
+		message := NewPeerMessage(response[currPossition : currPossition+size])
+		fmt.Println("message type:", message.code)
+		fmt.Printf("peer has the following peeces %b\n", message.payload)
+		currPossition = currPossition + size
+		messages = append(messages, *message)
+	}
+
+	return messages
+}
+
+func (peer Peer) handlePeerMesssage(message peerMessage) {
+	switch message.code {
+	case bitfield:
+		peer.Bitset.InternalSet = message.payload
+	case have:
+		indx = uint32(message.payload)
+		peer.Bitset.Set(indx)
+	case interested:
+		peer.Status.Interested = true
+	case notInterested:
+		peer.Status.Interested = false
+	case choke:
+		peer.Status.Choking = true
+	case unchoke:
+		peer.Status.Choking = false
+	case request:
+		fmt.Println("Peer", peer.Url, "requested piece")
+	case piece:
+	
+	case cancel:
+		fmt.Println("Peer", peer.Url, "cancled requested piece")
 	}
 }
