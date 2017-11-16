@@ -1,8 +1,8 @@
 package bitset
 
 type BitSet struct {
-	InternalSet  []byte
-	Size int
+	InternalSet []byte
+	Size        int
 }
 
 func NewBitSet(size int) *BitSet {
@@ -45,4 +45,27 @@ func (bitset BitSet) Get(indx int) bool {
 	position := uint32(indx % 8)
 	mask := 128 >> position
 	return (block & byte(mask)) > 0
+}
+
+func (bitset BitSet) FirstUnset(fromIndx int) int {
+	position := uint32(fromIndx % 8)
+	mask := 128
+
+	for sliceIndex := fromIndx / 8; sliceIndex < len(bitset.InternalSet); {
+		block := bitset.InternalSet[sliceIndex]
+		unset := (block & byte(mask>>position)) == 0
+		if unset {
+			return sliceIndex*8 + int(position)
+		}
+
+		if position == 7 {
+			position = 0
+			sliceIndex++
+			continue
+		}
+
+		position++
+	}
+
+	return -1
 }

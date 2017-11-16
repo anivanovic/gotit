@@ -119,3 +119,11 @@ func (torrent Torrent) SetDownloaded(pieceIndx int) {
 	torrent.Bitset.Set(pieceIndx)
 	torrent.bitfieldGuard.Unlock()
 }
+
+func (torrent Torrent) NextDownladPiece() int {
+	torrent.bitfieldGuard.Lock()
+	index := torrent.Bitset.FirstUnset(0)
+	torrent.bitfieldGuard.Unlock()
+
+	return index
+}
