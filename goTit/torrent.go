@@ -7,7 +7,7 @@ import (
 
 	"bytes"
 	"encoding/binary"
-	
+
 	"math"
 
 	"sync"
@@ -34,7 +34,7 @@ type Torrent struct {
 	Comment       string
 	IsDirectory   bool
 
-	bitfieldGuard sync.Mutex
+	bitfieldGuard *sync.Mutex
 	Bitset        bitset.BitSet
 }
 
@@ -97,7 +97,7 @@ func NewTorrent(dictElement metainfo.DictElement) *Torrent {
 	if comment := dictElement.Value("comment"); comment != nil {
 		torrent.Comment = comment.(metainfo.StringElement).Value
 	}
-	torrent.PiecesNum = math.Ceil(float64(torrent.Length)/torrent.PieceLength)
+	torrent.PiecesNum = int(math.Ceil(float64(torrent.Length) / float64(torrent.PieceLength)))
 
 	return torrent
 }
