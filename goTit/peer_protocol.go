@@ -147,11 +147,12 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 }
 
 type Peer struct {
-	Url     string
-	Conn    net.Conn
-	Torrent *Torrent
-	Bitset  *bitset.BitSet
-	Status  *PeerStatus
+	Url          string
+	Conn         net.Conn
+	Torrent      *Torrent
+	Bitset       *bitset.BitSet
+	PeerStatus   *PeerStatus
+	ClientStatus *PeerStatus
 }
 
 type PeerStatus struct {
@@ -164,7 +165,7 @@ func newPeerStatus() *PeerStatus {
 }
 
 func NewPeer(ip string, torrent *Torrent) *Peer {
-	return &Peer{ip, nil, torrent, bitset.NewBitSet(torrent.PiecesNum), newPeerStatus()}
+	return &Peer{ip, nil, torrent, bitset.NewBitSet(torrent.PiecesNum), newPeerStatus(), newPeerStatus()}
 }
 
 func (peer Peer) connect() {
@@ -192,57 +193,56 @@ func (peer Peer) Announce(peerId []byte) bool {
 	valid := checkHandshake(response, peer.Torrent.Hash, peerId)
 	if valid {
 		messages := readResponse(response[68:])
+		for _, message := range messages {
+			peer.handlePeerMesssage(message)
+		}
 	}
 
 	return valid
 }
 
-// Intended to be run in separate goroutin. Communicates with remote peer
+// Intended to be run in separate gorutin. Communicates with remote peer
 // and downloads torrent
 func (peer Peer) GoMessaging() {
-	interestedM := createInterestedMessage()
-	fmt.Println("Sending interested message")
 
-	peer.Conn.SetDeadline(time.Now().Add(timeout))
-	peer.Conn.Write(interestedM)
+	if peer.PeerStatus.Choking {
+		peer.ClientStatus.Interested = true
+		interestedM := createInterestedMessage()
+		fmt.Println("Sending interested message")
+
+		peer.Conn.SetDeadline(time.Now().Add(timeout))
+		peer.Conn.Write(interestedM)
+
+	}
 
 	fmt.Println("Reading Response")
-	//WAIT:
-	response = readConn(peer.Conn)
-
-	// keepalive message
-	//if len(response) == 0 {
-	//	time.Sleep(time.Minute * 1)
-	//	goto WAIT
-	//}
+	response := readConn(peer.Conn)
 
 	fmt.Println("Read all data", len(response))
 	for i := 0; len(response) == 0 && i < 5; i++ {
 		time.Sleep(timeout)
 		response = readConn(peer.Conn)
 	}
-	if len(response) == 0 {
-		continue
-	}
+
 	peerMessages := readResponse(response)
+	for _, message := range peerMessages {
+		peer.handlePeerMesssage(message)
+	}
 
-	message := peerMessages[0]
-	if message.code == unchoke {
-		for i := 0; i < 32; i++ {
-			fmt.Print("\rRequesting piece 0 and block", i)
-			peer.Conn.SetDeadline(time.Now().Add(timeout))
-			peer.Conn.Write(createRequestMessage(0, i*int(blockLength)))
+	pieceIndex := peer.Torrent.NextDownladPiece()
+	blockRequests := peer.Torrent.PieceLength / int(blockLength)
+	for i := 0; i < blockRequests; i++ {
+		fmt.Print("\rRequesting piece", pieceIndex, "and block", i)
+		peer.Conn.SetDeadline(time.Now().Add(timeout))
+		peer.Conn.Write(createRequestMessage(pieceIndex, i*int(blockLength)))
 
+		response = readConn(peer.Conn)
+		for i := 0; len(response) == 0 && i < 5; i++ {
+			time.Sleep(time.Second * 5)
 			response = readConn(peer.Conn)
-			for i := 0; len(response) == 0 && i < 5; i++ {
-				time.Sleep(time.Second * 5)
-				response = readConn(peer.Conn)
-			}
-			if len(response) == 0 {
-				continue IP_LOOP
-			}
-			readPieceResponse(response, peer.Conn)
 		}
+
+		readPieceResponse(response, peer.Conn)
 	}
 }
 
@@ -253,11 +253,13 @@ func readResponse(response []byte) []peerMessage {
 	messages := make([]peerMessage, 0)
 	for currPossition < read {
 		size := int(binary.BigEndian.Uint32(response[currPossition : currPossition+4]))
-		if size == 0 { // keepalive message
-			messages = append(messages, *NewPeerMessage(nil))
-		}
 		currPossition += 4
 		fmt.Println("size", size)
+
+		if size == 0 { // keepalive message
+			messages = append(messages, *NewPeerMessage(nil))
+			continue
+		}
 		message := NewPeerMessage(response[currPossition : currPossition+size])
 		fmt.Println("message type:", message.code)
 		fmt.Printf("peer has the following peeces %b\n", message.payload)
@@ -269,6 +271,12 @@ func readResponse(response []byte) []peerMessage {
 }
 
 func (peer Peer) handlePeerMesssage(message peerMessage) {
+	// if keepalive wait 2 minutes and try again
+	if message.size == 0 {
+		time.Sleep(time.Minute * 2)
+		return
+	}
+
 	switch message.code {
 	case bitfield:
 		peer.Bitset.InternalSet = message.payload
@@ -276,13 +284,16 @@ func (peer Peer) handlePeerMesssage(message peerMessage) {
 		indx := int(message.payload)
 		peer.Bitset.Set(indx)
 	case interested:
-		peer.Status.Interested = true
+		peer.PeerStatus.Interested = true
+		// return choke or unchoke
 	case notInterested:
-		peer.Status.Interested = false
+		peer.PeerStatus.Interested = false
+		// return choke
 	case choke:
-		peer.Status.Choking = true
+		peer.PeerStatus.Choking = true
+		time.Sleep(time.Second * 30)
 	case unchoke:
-		peer.Status.Choking = false
+		peer.PeerStatus.Choking = false
 	case request:
 		fmt.Println("Peer", peer.Url, "requested piece")
 	case piece:
