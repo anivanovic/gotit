@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net"
 	"time"
-	
+
 	"github.com/anivanovic/goTit/bitset"
 )
 
@@ -31,7 +31,12 @@ type peerMessage struct {
 }
 
 func NewPeerMessage(data []byte) *peerMessage {
-	message := peerMessage{size: uint32(len(data)), code: data[0], payload: data[1:]}
+	var message peerMessage
+	if len(data) == 0 { // keepalive message
+		message = peerMessage{size: 0, code: nil, payload: nil}
+	} else {
+		message = peerMessage{size: uint32(len(data)), code: data[0], payload: data[1:]}
+	}
 	return &message
 }
 
@@ -248,6 +253,9 @@ func readResponse(response []byte) []peerMessage {
 	messages := make([]peerMessage, 0)
 	for currPossition < read {
 		size := int(binary.BigEndian.Uint32(response[currPossition : currPossition+4]))
+		if size == 0 { // keepalive message
+			messages = append(messages, *NewPeerMessage(nil))
+		}
 		currPossition += 4
 		fmt.Println("size", size)
 		message := NewPeerMessage(response[currPossition : currPossition+size])
@@ -265,7 +273,7 @@ func (peer Peer) handlePeerMesssage(message peerMessage) {
 	case bitfield:
 		peer.Bitset.InternalSet = message.payload
 	case have:
-		indx = uint32(message.payload)
+		indx := int(message.payload)
 		peer.Bitset.Set(indx)
 	case interested:
 		peer.Status.Interested = true
@@ -278,7 +286,7 @@ func (peer Peer) handlePeerMesssage(message peerMessage) {
 	case request:
 		fmt.Println("Peer", peer.Url, "requested piece")
 	case piece:
-	
+
 	case cancel:
 		fmt.Println("Peer", peer.Url, "cancled requested piece")
 	}
