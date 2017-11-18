@@ -33,7 +33,7 @@ type peerMessage struct {
 func NewPeerMessage(data []byte) *peerMessage {
 	var message peerMessage
 	if len(data) == 0 { // keepalive message
-		message = peerMessage{size: 0, code: nil, payload: nil}
+		message = peerMessage{size: 0, code: 99, payload: nil}
 	} else {
 		message = peerMessage{size: uint32(len(data)), code: data[0], payload: data[1:]}
 	}
@@ -281,8 +281,8 @@ func (peer Peer) handlePeerMesssage(message peerMessage) {
 	case bitfield:
 		peer.Bitset.InternalSet = message.payload
 	case have:
-		indx := int(message.payload)
-		peer.Bitset.Set(indx)
+		indx := binary.BigEndian.Uint32(message.payload)
+		peer.Bitset.Set(int(indx))
 	case interested:
 		peer.PeerStatus.Interested = true
 		// return choke or unchoke
