@@ -94,8 +94,9 @@ func main() {
 	for ip, _ := range ips {
 
 		peer := NewPeer(ip, torrent)
-		connected := peer.Announce(peerId)
-		if connected {
+		err := peer.Announce(peerId)
+		CheckError(err)
+		if err == nil {
 			go peer.GoMessaging()
 		}
 	}

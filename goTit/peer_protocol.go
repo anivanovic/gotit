@@ -168,17 +168,21 @@ func NewPeer(ip string, torrent *Torrent) *Peer {
 	return &Peer{ip, nil, torrent, bitset.NewBitSet(torrent.PiecesNum), newPeerStatus(), newPeerStatus()}
 }
 
-func (peer Peer) connect() {
+func (peer *Peer) connect() error {
 	if peer.Conn == nil {
 		conn, err := net.DialTimeout("tcp", peer.Url, time.Millisecond*1000)
-		CheckError(err)
 		peer.Conn = conn
+		return err
 	}
+
+	return nil
 }
 
-func (peer Peer) Announce(peerId []byte) bool {
-	peer.connect()
-
+func (peer *Peer) Announce(peerId []byte) error {
+	err := peer.connect()
+	if err != nil {
+		return err
+	}
 	fmt.Println("writing to tcp socket")
 	peer.Conn.SetDeadline(time.Now().Add(time.Second * 1))
 
@@ -198,12 +202,12 @@ func (peer Peer) Announce(peerId []byte) bool {
 		}
 	}
 
-	return valid
+	return nil
 }
 
-// Intended to be run in separate gorutin. Communicates with remote peer
+// Intended to be run in separate goroutin. Communicates with remote peer
 // and downloads torrent
-func (peer Peer) GoMessaging() {
+func (peer *Peer) GoMessaging() {
 
 	if peer.PeerStatus.Choking {
 		peer.ClientStatus.Interested = true
@@ -270,7 +274,7 @@ func readResponse(response []byte) []peerMessage {
 	return messages
 }
 
-func (peer Peer) handlePeerMesssage(message peerMessage) {
+func (peer *Peer) handlePeerMesssage(message peerMessage) {
 	// if keepalive wait 2 minutes and try again
 	if message.size == 0 {
 		time.Sleep(time.Minute * 2)
@@ -281,8 +285,8 @@ func (peer Peer) handlePeerMesssage(message peerMessage) {
 	case bitfield:
 		peer.Bitset.InternalSet = message.payload
 	case have:
-		indx := binary.BigEndian.Uint32(message.payload)
-		peer.Bitset.Set(int(indx))
+		indx := int(binary.BigEndian.Uint32(message.payload))
+		peer.Bitset.Set(indx)
 	case interested:
 		peer.PeerStatus.Interested = true
 		// return choke or unchoke
@@ -295,10 +299,10 @@ func (peer Peer) handlePeerMesssage(message peerMessage) {
 	case unchoke:
 		peer.PeerStatus.Choking = false
 	case request:
-		fmt.Println("Peer", peer.Url, "requested piece")
+		fmt.Println(peer.Url, "Peer", peer.Url, "requested piece")
 	case piece:
 
 	case cancel:
-		fmt.Println("Peer", peer.Url, "cancled requested piece")
+		fmt.Println(peer.Url, "Peer", peer.Url, "cancled requested piece")
 	}
 }

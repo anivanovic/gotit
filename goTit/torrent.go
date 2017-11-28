@@ -102,7 +102,7 @@ func NewTorrent(dictElement metainfo.DictElement) *Torrent {
 	return torrent
 }
 
-func (torrent Torrent) CreateHandshake(peerId []byte) []byte {
+func (torrent *Torrent) CreateHandshake(peerId []byte) []byte {
 	request := new(bytes.Buffer)
 	// 19 - as number of letters in protocol type string
 	binary.Write(request, binary.BigEndian, uint8(len(BITTORENT_PROT)))
@@ -114,13 +114,13 @@ func (torrent Torrent) CreateHandshake(peerId []byte) []byte {
 	return request.Bytes()
 }
 
-func (torrent Torrent) SetDownloaded(pieceIndx int) {
+func (torrent *Torrent) SetDownloaded(pieceIndx int) {
 	torrent.bitfieldGuard.Lock()
 	torrent.Bitset.Set(pieceIndx)
 	torrent.bitfieldGuard.Unlock()
 }
 
-func (torrent Torrent) NextDownladPiece() int {
+func (torrent *Torrent) NextDownladPiece() int {
 	torrent.bitfieldGuard.Lock()
 	index := torrent.Bitset.FirstUnset(0)
 	torrent.bitfieldGuard.Unlock()

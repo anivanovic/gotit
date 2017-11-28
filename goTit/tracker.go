@@ -31,7 +31,7 @@ func Tracker(url *url2.URL) *tracker {
 	return &tracker
 }
 
-func (t tracker) Handshake(transactionId uint32) uint64 {
+func (t *tracker) Handshake(transactionId uint32) uint64 {
 	request := new(bytes.Buffer)
 	var action uint32 = 0
 
@@ -79,7 +79,7 @@ func createAnnounce(connId uint64, hash, peerId []byte) *bytes.Buffer {
 	return request
 }
 
-func (t tracker) Announce(connId uint64, hash []byte, transactionId uint32, peerId []byte) *map[string]bool {
+func (t *tracker) Announce(connId uint64, hash []byte, transactionId uint32, peerId []byte) *map[string]bool {
 	request := createAnnounce(connId, hash, peerId)
 	t.Conn.SetDeadline(time.Now().Add(timeout))
 	t.Conn.WriteTo(request.Bytes(), t.addr)
@@ -89,7 +89,7 @@ func (t tracker) Announce(connId uint64, hash []byte, transactionId uint32, peer
 	return &ips
 }
 
-func (t tracker) Close() {
+func (t *tracker) Close() {
 	t.Conn.Close()
 }
 
