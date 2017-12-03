@@ -10,7 +10,7 @@ func NewBitSet(size int) *BitSet {
 	return &bitset
 }
 
-func (bitset BitSet) Unset(indx int) {
+func (bitset *BitSet) Unset(indx int) {
 	if indx < 0 {
 		return
 	}
@@ -25,7 +25,7 @@ func (bitset BitSet) Unset(indx int) {
 	bitset.InternalSet[sliceIndex] = block
 }
 
-func (bitset BitSet) Set(indx int) {
+func (bitset *BitSet) Set(indx int) {
 	if indx < 0 {
 		return
 	}
@@ -40,14 +40,14 @@ func (bitset BitSet) Set(indx int) {
 	bitset.InternalSet[sliceIndex] = bitsetBlock
 }
 
-func (bitset BitSet) Get(indx int) bool {
+func (bitset *BitSet) Get(indx int) bool {
 	block := bitset.InternalSet[indx/8]
 	position := uint32(indx % 8)
 	mask := 128 >> position
 	return (block & byte(mask)) > 0
 }
 
-func (bitset BitSet) FirstUnset(fromIndx int) int {
+func (bitset *BitSet) FirstUnset(fromIndx int) int {
 	position := uint32(fromIndx % 8)
 	mask := 128
 
