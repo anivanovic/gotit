@@ -39,7 +39,7 @@ func handlePeerConnection(conn net.Conn) {
 
 	conn.SetDeadline(time.Now().Add(time.Second * 5))
 	conn.Write(response[0:68])
-	conn.Write(createBitfieldMessage())
+	//conn.Write(createBitfieldMessage())
 	fmt.Println("send handhake and bitfield")
 
 	if len(response) > 68 {
