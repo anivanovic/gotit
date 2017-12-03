@@ -12,6 +12,8 @@ import (
 
 	"sync"
 
+	"os"
+
 	"github.com/anivanovic/goTit/bitset"
 	"github.com/anivanovic/goTit/metainfo"
 )
@@ -26,7 +28,8 @@ type Torrent struct {
 	PieceLength   int
 	Pieces        []byte
 	PiecesNum     int
-	Files         []TorrentFile
+	TorrentFiles  []TorrentFile
+	OsFiles       []*os.File
 	Name          string
 	CreationDate  int64
 	CreatedBy     string
@@ -35,7 +38,7 @@ type Torrent struct {
 	IsDirectory   bool
 
 	bitfieldGuard *sync.Mutex
-	Bitset        bitset.BitSet
+	Bitset        *bitset.BitSet
 }
 
 type TorrentFile struct {
@@ -53,6 +56,7 @@ func NewTorrent(dictElement metainfo.DictElement) *Torrent {
 	torrent.Pieces = []byte(dictElement.Value("info.pieces").String())
 	torrent.CreationDate, _ = strconv.ParseInt(dictElement.Value("creation date").String(), 10, 0)
 	torrent.bitfieldGuard = new(sync.Mutex)
+	torrent.Bitset = bitset.NewBitSet(torrent.PieceLength)
 
 	torrent.Info = dictElement.Value("info").Encode()
 
@@ -91,6 +95,7 @@ func NewTorrent(dictElement metainfo.DictElement) *Torrent {
 
 			torrentFiles = append(torrentFiles, torrentFile)
 		}
+		torrent.TorrentFiles = torrentFiles
 		torrent.Length = completeLength
 	}
 
