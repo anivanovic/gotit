@@ -23,6 +23,8 @@ const (
 	DownloadFolder        = "C:/Users/Antonije/Downloads/"
 )
 
+var CLIENT_ID = [8]byte{'-', 'G', 'O', '0', '1', '0', '0', '-'}
+
 // set up logger
 func init() {
 	log.SetOutput(os.Stdout)
@@ -35,12 +37,18 @@ func CheckError(err error) {
 	}
 }
 
-func randStringBytes(n int) []byte {
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-	}
-	return b
+// implemented BEP20
+func createClientId() []byte {
+	peerId := make([]byte, 20)
+	copy(peerId, CLIENT_ID[:])
+
+	// create remaining random bytes
+	rand.Read(peerId[len(CLIENT_ID):])
+	log.WithFields(log.Fields{
+		"PEER_ID": string(peerId),
+		"size":    len(peerId),
+	}).Info("Created client id")
+	return peerId
 }
 
 func readConn(conn net.Conn) []byte {
@@ -84,7 +92,7 @@ func main() {
 	log.Debug(benDict.String())
 
 	transactionId := uint32(12345612)
-	peerId := randStringBytes(20)
+	peerId := createClientId()
 
 	torrent := NewTorrent(*benDict)
 
