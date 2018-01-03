@@ -3,15 +3,16 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"math/rand"
 	"net"
 	url2 "net/url"
 	"strconv"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
-const timeout = time.Millisecond * 2000
+const timeout = time.Second * 2
 const protocol_id uint64 = 0x41727101980
 
 type tracker struct {
@@ -41,20 +42,22 @@ func (t *tracker) Handshake(transactionId uint32) uint64 {
 
 	t.Conn.SetDeadline(time.Now().Add(timeout))
 	t.Conn.WriteTo(request.Bytes(), t.addr)
+	log.Info("Sent handshake to tracker")
 
 	p := make([]byte, 16)
 	length, _, err := t.Conn.ReadFromUDP(p)
 
 	CheckError(err)
 
-	fmt.Println("read response")
-	if length == 16 {
-		fmt.Println("Read 16 bites")
-	}
+	log.WithField("length", length).Debug("Tracker response")
 	connVar := binary.BigEndian.Uint32(p[:4])
 	transResp := binary.BigEndian.Uint32(p[4:8])
 	connId := binary.BigEndian.Uint64(p[8:16])
-	fmt.Println("response: ", connVar, transResp, connId)
+	log.WithFields(log.Fields{
+		"connection id":  connId,
+		"transaction id": transResp,
+		"connection var": connVar,
+	}).Info("Tracker handshake response")
 
 	return connId
 }
@@ -83,7 +86,7 @@ func (t *tracker) Announce(connId uint64, hash []byte, transactionId uint32, pee
 	request := createAnnounce(connId, hash, peerId)
 	t.Conn.SetDeadline(time.Now().Add(timeout))
 	t.Conn.WriteTo(request.Bytes(), t.addr)
-	fmt.Println("Send announce")
+	log.WithField("ip", t.Url.String()).Info("Announce sent to tracker")
 	response := readConn(t.Conn)
 	ips := readAnnounceResponse(response, transactionId)
 	return &ips
@@ -94,7 +97,7 @@ func (t *tracker) Close() {
 }
 
 func readAnnounceResponse(response []byte, transaction_id uint32) map[string]bool {
-	fmt.Println("Dohvaćeno podataka ", len(response))
+	log.WithField("length", len(response)).Debug("Tracker response")
 	if len(response) < 21 {
 		return nil
 	}
@@ -107,8 +110,14 @@ func readAnnounceResponse(response []byte, transaction_id uint32) map[string]boo
 	peerAddresses := response[20:]
 
 	ips := make(map[string]bool, 0)
-	fmt.Println("Peer count ", peerCount)
-	fmt.Println("response code ", resCode, transaction_id, interval, leachers, seaders)
+	log.WithFields(log.Fields{
+		"resCode":        resCode,
+		"transaction id": transaction_id,
+		"interval":       interval,
+		"leachers":       leachers,
+		"seaders":        seaders,
+		"peer count":     peerCount,
+	}).Info("Tracker message")
 	for read := 0; read < peerCount; read++ {
 		byteMask := 6
 

@@ -69,3 +69,30 @@ func (bitset *BitSet) FirstUnset(fromIndx int) int {
 
 	return -1
 }
+
+func (bitset *BitSet) FirstSet(fromIndx int) int {
+	position := uint32(fromIndx % 8)
+	mask := 128
+
+	for sliceIndex := fromIndx / 8; sliceIndex < len(bitset.InternalSet); {
+		block := bitset.InternalSet[sliceIndex]
+		set := (block & byte(mask>>position)) > 0
+		if set {
+			return sliceIndex*8 + int(position)
+		}
+
+		if position == 7 {
+			position = 0
+			sliceIndex++
+			continue
+		}
+
+		position++
+	}
+
+	return -1
+}
+
+func (bitset *BitSet) LastSet(fromIndx int) int {
+	return bitset.FirstUnset(fromIndx) - 1
+}

@@ -43,3 +43,13 @@ func TestFirstUnset(t *testing.T) {
 		t.Error("Unset index ", firstUnset, "Should be 0")
 	}
 }
+
+func TestBitSet_FirstSet(t *testing.T) {
+	bitset := NewBitSet(20)
+	bitset.Set(5)
+	firstSet := bitset.FirstSet(0)
+	t.Log("first set", firstSet)
+	if firstSet != 5 {
+		t.Error("Set index", firstSet, "Should be 5")
+	}
+}

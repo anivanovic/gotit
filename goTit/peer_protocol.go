@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"net"
 	"time"
 
@@ -15,7 +14,10 @@ import (
 
 	"strconv"
 
+	"math/rand"
+
 	"github.com/anivanovic/goTit/bitset"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -30,19 +32,21 @@ const (
 	cancel               // 8
 )
 
-const blockLength uint32 = 16 * 1024
-
-const PEER_TIMEOUT = time.Second * 30
-const READ_MAX = 1020
+const PEER_TIMEOUT = time.Second * 10
+const READ_MAX = 1050
 
 type Peer struct {
+	Id           int
 	Url          string
 	Conn         net.Conn
+	mng          *torrentManager
 	Torrent      *Torrent
 	Bitset       *bitset.BitSet
 	PeerStatus   *PeerStatus
 	ClientStatus *PeerStatus
 	PieceCh      chan<- *peerMessage
+	start        time.Time
+	logger       *log.Entry
 }
 
 type PeerStatus struct {
@@ -65,17 +69,6 @@ func NewPeerMessage(data []byte) *peerMessage {
 		message = peerMessage{size: uint32(len(data)), code: data[0], payload: data[1:]}
 	}
 	return &message
-}
-
-func createRequestMessage(piece int, beginOffset int) []byte {
-	message := new(bytes.Buffer)
-	binary.Write(message, binary.BigEndian, uint32(13))
-	binary.Write(message, binary.BigEndian, uint8(request))
-	binary.Write(message, binary.BigEndian, uint32(piece))
-	binary.Write(message, binary.BigEndian, uint32(beginOffset))
-	binary.Write(message, binary.BigEndian, uint32(blockLength))
-
-	return message.Bytes()
 }
 
 func createNotInterestedMessage() []byte {
@@ -135,16 +128,19 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 	}
 
 	ressCode := uint8(handshake[0])
-	fmt.Println(ressCode, string(handshake[1:20]))
+	protocolSignature := string(handshake[1:20])
 	reservedBytes := binary.BigEndian.Uint64(handshake[20:28])
-	fmt.Println(reservedBytes)
 	sentHash := handshake[28:48]
-	fmt.Printf("info hash: %x\n", sentHash)
 	sentPeerId := handshake[48:68]
-	fmt.Printf("info hash: %b\n", sentPeerId)
+	log.WithFields(log.Fields{
+		"resCode":            ressCode,
+		"protocol signature": protocolSignature,
+		"hash":               sentHash,
+		"peerId":             sentPeerId,
+	}).Debug("Peer handshake message")
 
 	return ressCode != 19 ||
-		string(handshake[1:20]) != string(BITTORENT_PROT[:len(BITTORENT_PROT)]) ||
+		protocolSignature != string(BITTORENT_PROT[:len(BITTORENT_PROT)]) ||
 		reservedBytes != 0 ||
 		bytes.Compare(sentHash, hash) != 0 ||
 		bytes.Compare(sentPeerId, peerId) != 0
@@ -154,13 +150,233 @@ func newPeerStatus() *PeerStatus {
 	return &PeerStatus{true, false, true}
 }
 
-func NewPeer(ip string, torrent *Torrent, ch chan<- *peerMessage) *Peer {
-	return &Peer{ip, nil, torrent, bitset.NewBitSet(torrent.PiecesNum),
-		newPeerStatus(), newPeerStatus(), ch}
+func NewPeer(ip string, torrent *Torrent, mng *torrentManager, ch chan<- *peerMessage) *Peer {
+	logger := log.WithFields(log.Fields{
+		"url": ip,
+	})
+
+	return &Peer{rand.Int(), ip, nil, mng, torrent, bitset.NewBitSet(torrent.PiecesNum),
+		newPeerStatus(), newPeerStatus(), ch, time.Now(), logger}
+}
+
+// Intended to be run in separate goroutin. Communicates with remote peer
+// and downloads torrent
+func (peer *Peer) GoMessaging() {
+
+	sentPieceMsg := false
+	for {
+		peer.checkKeepAlive()
+
+		if peer.PeerStatus.Choking {
+			peer.ClientStatus.Interested = true
+			interestedM := createInterestedMessage()
+			peer.logger.Info("Sending interested message")
+
+			_, err := peer.sendMessage(interestedM)
+			if err != nil {
+				return
+			}
+		}
+
+		var requestMsg []byte
+		if !peer.PeerStatus.Choking && !sentPieceMsg {
+			requestMsg = peer.mng.NextRequest()
+			sentPieceMsg = true
+			_, err := peer.sendMessage(requestMsg)
+			if err != nil {
+				return
+			}
+		}
+
+		// read message from peer
+		response, err := readPeerConn(peer)
+		if err != nil {
+			if sentPieceMsg {
+				peer.mng.RequestFailed(requestMsg)
+			}
+			return
+		}
+
+		peerMessages := readResponse(response)
+		for _, message := range peerMessages {
+			if sentPieceMsg {
+				sentPieceMsg = false
+			}
+			peer.handlePeerMesssage(&message)
+		}
+	}
+}
+
+func (peer *Peer) checkKeepAlive() {
+	elapsed := time.Since(peer.start)
+	if elapsed.Minutes() > 1.9 {
+		peer.logger.Info("Sending keep alive message")
+		peer.start = time.Now()
+		peer.sendMessage(make([]byte, 4)) // send 0
+	}
+}
+
+func (peer *Peer) handlePeerMesssage(message *peerMessage) {
+	// if keepalive wait 2 minutes and try again
+	if message.size == 0 {
+		peer.logger.Debug("Peer sent keepalive")
+		time.Sleep(time.Minute * 2)
+		return
+	}
+
+	switch message.code {
+	case bitfield:
+		peer.logger.Debug("Peer sent bitfield message")
+		peer.Bitset.InternalSet = message.payload
+	case have:
+		peer.logger.Debug("Peer sent have message")
+		indx := int(binary.BigEndian.Uint32(message.payload))
+		peer.Bitset.Set(indx)
+	case interested:
+		peer.logger.Debug("Peer sent interested message")
+		peer.PeerStatus.Interested = true
+		// return choke or unchoke
+	case notInterested:
+		peer.logger.Debug("Peer sent notInterested message")
+		peer.PeerStatus.Interested = false
+		// return choke
+	case choke:
+		peer.logger.Debug("Peer sent choke message")
+		peer.PeerStatus.Choking = true
+		time.Sleep(time.Second * 30)
+	case unchoke:
+		peer.logger.Debug("Peer sent unchoke message")
+		peer.PeerStatus.Choking = false
+	case request:
+		peer.logger.Debug("Peer sent request message")
+	case piece:
+		peer.logger.Debug("Peer sent piece message")
+		peer.PieceCh <- message
+		//peer.sendHave(message.payload)
+	case cancel:
+		peer.logger.Info("Peer received cancle message")
+	}
+}
+
+func (peer *Peer) sendHave(payload []byte) {
+	indx := binary.BigEndian.Uint32(payload[:4])
+	peer.sendMessage(createHaveMessage(int(indx)))
+}
+
+//////////////////////
+// PEER IO METHODES //
+//////////////////////
+func (peer *Peer) sendMessage(message []byte) (int, error) {
+	peer.Conn.SetWriteDeadline(time.Now().Add(PEER_TIMEOUT))
+	n, err := peer.Conn.Write(message)
+	peer.logger.WithFields(log.Fields{
+		"written": n,
+		"error":   err,
+	}).Debug("sendMessage to peer")
+	return n, err
+}
+
+func readResponse(response []byte) []peerMessage {
+	read := len(response)
+	currPossition := 0
+
+	messages := make([]peerMessage, 0)
+	for currPossition < read {
+		size := int(binary.BigEndian.Uint32(response[currPossition : currPossition+4]))
+		currPossition += 4
+
+		if size == 0 { // keepalive message
+			log.Info("Received keepalice message")
+			messages = append(messages, *NewPeerMessage(nil))
+		} else {
+			message := NewPeerMessage(response[currPossition : currPossition+size])
+			log.WithFields(log.Fields{
+				"code": message.code,
+				"size": size,
+			}).Debug("Peer message")
+			currPossition = currPossition + size
+			messages = append(messages, *message)
+		}
+	}
+
+	return messages
+}
+
+func checkErr(err error, peer *Peer) {
+
+	if err == nil {
+		return
+	} else if netError, ok := err.(net.Error); ok && netError.Timeout() {
+		peer.logger.Warn("Peer conn timeout")
+		return
+	} else if io.EOF == err {
+		peer.logger.Warn("Peer conn EOF")
+		peer.PeerStatus.Valid = false
+	}
+
+	switch t := err.(type) {
+	case *net.OpError:
+		if t.Op == "dial" {
+			peer.logger.Warn("Peer conn Unknown host")
+			peer.PeerStatus.Valid = false
+		} else if t.Op == "read" {
+			peer.logger.Warn("Peer conn refused")
+			peer.PeerStatus.Valid = false
+		}
+
+	case syscall.Errno:
+		if t == syscall.ECONNREFUSED {
+			peer.logger.Warn("Peer conn refuse 2")
+			peer.PeerStatus.Valid = false
+		}
+
+	default:
+		peer.logger.WithField("err", err).Warn("Unknown error")
+	}
+}
+
+func readPeerConn(peer *Peer) ([]byte, error) {
+	sizeDat := make([]byte, 4)
+	peer.Conn.SetReadDeadline(time.Now().Add(PEER_TIMEOUT))
+	n, err := peer.Conn.Read(sizeDat)
+	peer.logger.WithField("read", n).Debug("readPeerConn - reading message size from conn")
+
+	if err != nil {
+		checkErr(err, peer)
+		return nil, err
+	}
+
+	if n != 4 {
+		return nil, errors.New("Torrent message read error. Read data" + strconv.Itoa(n))
+	}
+	messageSize := binary.BigEndian.Uint32(sizeDat)
+	if messageSize == 0 {
+		return make([]byte, 0), nil
+	}
+	peer.logger.WithField("size", messageSize).Debug("Read peer message length")
+
+	payload := make([]byte, messageSize)
+	response := make([]byte, 0, messageSize+4)
+
+	peer.Conn.SetReadDeadline(time.Now().Add(PEER_TIMEOUT))
+	n, err = io.ReadFull(peer.Conn, payload)
+	peer.logger.WithField("read", n).Debug("readPeerConn - reading message payload from conn")
+
+	if err != nil {
+		checkErr(err, peer)
+		return nil, err
+	}
+
+	response = append(response, sizeDat...)
+	response = append(response, payload...)
+
+	return response, nil
 }
 
 func (peer *Peer) connect() error {
+	peer.logger.Info("Connecting to peer")
 	if peer.Conn == nil {
+		peer.start = time.Now()
 		conn, err := net.DialTimeout("tcp", peer.Url, time.Second*5)
 		peer.Conn = conn
 		return err
@@ -174,18 +390,17 @@ func (peer *Peer) Announce(peerId []byte) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("writing to tcp socket")
+	peer.logger.Info("Sending announce message")
 
 	handshake := peer.Torrent.CreateHandshake(peerId)
 	peer.Conn.SetDeadline(time.Now().Add(time.Second * 5))
 	peer.Conn.Write(handshake)
-	fmt.Println(len(handshake), "bytes written")
 
 	peer.Conn.SetDeadline(time.Now().Add(time.Second * 5))
 	response := readConn(peer.Conn)
 
 	read := len(response)
-	fmt.Println("Read all data", read)
+	peer.logger.WithField("length", read).Info("Read handshake message")
 	valid := checkHandshake(response, peer.Torrent.Hash, peerId)
 
 	if valid {
@@ -196,211 +411,7 @@ func (peer *Peer) Announce(peerId []byte) error {
 
 		return nil
 	} else {
+		peer.logger.Warn("Peer handshake invalid")
 		return errors.New("Peer handshake invalid")
-	}
-}
-
-// Intended to be run in separate goroutin. Communicates with remote peer
-// and downloads torrent
-func (peer *Peer) GoMessaging() {
-
-	for true {
-		if peer.PeerStatus.Choking {
-			peer.ClientStatus.Interested = true
-			interestedM := createInterestedMessage()
-			fmt.Println("Sending interested message")
-
-			peer.Conn.SetDeadline(time.Now().Add(timeout))
-			peer.Conn.Write(interestedM)
-		}
-
-		fmt.Println("Reading Response")
-		response, err := readPeerConn(peer.Conn, peer)
-		if err != nil {
-			return
-		}
-
-		peerMessages := readResponse(response)
-		for _, message := range peerMessages {
-			peer.handlePeerMesssage(&message)
-		}
-
-		if !peer.PeerStatus.Choking {
-			pieceIndex := peer.Torrent.NextDownladPiece()
-			blockRequests := peer.Torrent.PieceLength / int(blockLength)
-			for i := 0; i < blockRequests; i++ {
-				fmt.Print("\rRequesting piece ", pieceIndex, "and block ", i)
-				peer.Conn.SetDeadline(time.Now().Add(PEER_TIMEOUT))
-				peer.Conn.Write(createRequestMessage(pieceIndex, i*int(blockLength)))
-
-				response, err = readPeerConn(peer.Conn, peer)
-				if err != nil {
-					return
-				}
-
-				peerMessages = readResponse(response)
-				for _, message := range peerMessages {
-					peer.handlePeerMesssage(&message)
-				}
-			}
-		}
-	}
-}
-
-func readPeerConn(conn net.Conn, peer *Peer) ([]byte, error) {
-	sizeDat := make([]byte, 4)
-
-	conn.SetDeadline(time.Now().Add(PEER_TIMEOUT))
-	n, err := conn.Read(sizeDat)
-	if err != nil {
-		return nil, err
-	}
-
-	if n != 4 {
-		return nil, errors.New("Torrent message read error. Read data" + strconv.Itoa(n))
-	}
-	messageSize := binary.BigEndian.Uint32(sizeDat)
-	if messageSize == 0 {
-		return make([]byte, 0), nil
-	}
-	fmt.Println("Message size", messageSize)
-
-	readSize := messageSize
-	if messageSize > READ_MAX {
-		readSize = READ_MAX
-	}
-	fmt.Println("Read size", readSize)
-
-	read := 0
-	response := make([]byte, 0, messageSize+4)
-	response = append(response, sizeDat[:4]...)
-
-	for read < int(messageSize) {
-		tmp := make([]byte, readSize)
-		conn.SetDeadline(time.Now().Add(PEER_TIMEOUT))
-		n, err := conn.Read(tmp)
-		fmt.Println("Read from conn message size", n)
-		if err != nil {
-			checkErr(err, peer)
-			return nil, err
-		}
-		read += n
-		response = append(response, tmp[:n]...)
-	}
-
-	return response, nil
-}
-
-// TODO POPRAVITI NET KOMUNIKACIJU
-//func readPieceResponse(response []byte, conn net.Conn) {
-//	currPossition := 0
-//
-//	size := int(binary.BigEndian.Uint32(response[currPossition : currPossition+4]))
-//	currPossition += 4
-//	fmt.Println("size", size)
-//	message := NewPeerMessage(response[currPossition : currPossition+size])
-//	fmt.Println("message type:", message.code)
-//
-//	indx := binary.BigEndian.Uint32(message.payload[:4])
-//	offset := binary.BigEndian.Uint32(message.payload[4:8])
-//	fmt.Println("index", indx, "offset", offset)
-//	fmt.Printf("payload %b\n", message.payload[8:])
-//
-//	pieceSize := len(message.payload[8:])
-//	for pieceSize != int(blockLength) {
-//		response = readConn(conn)
-//		pieceSize += len(response)
-//		fmt.Printf("payload %b\n", response)
-//	}
-//}
-
-func checkErr(err error, peer *Peer) {
-	if err == nil {
-		fmt.Println("Ok")
-		return
-
-	} else if netError, ok := err.(net.Error); ok && netError.Timeout() {
-		println("Timeout")
-		return
-	} else if io.EOF == err {
-		fmt.Println("EOF")
-		peer.PeerStatus.Valid = false
-	}
-
-	switch t := err.(type) {
-	case *net.OpError:
-		if t.Op == "dial" {
-			fmt.Println("Unknown host")
-			peer.PeerStatus.Valid = false
-		} else if t.Op == "read" {
-			fmt.Println("Connection refused")
-			peer.PeerStatus.Valid = false
-		}
-
-	case syscall.Errno:
-		if t == syscall.ECONNREFUSED {
-			fmt.Println("Connection refused")
-			peer.PeerStatus.Valid = false
-		}
-
-	default:
-		fmt.Println("Unknown error", err)
-	}
-}
-
-func readResponse(response []byte) []peerMessage {
-	read := len(response)
-	currPossition := 0
-
-	messages := make([]peerMessage, 0)
-	for currPossition < read {
-		size := int(binary.BigEndian.Uint32(response[currPossition : currPossition+4]))
-		currPossition += 4
-		fmt.Println("Peer message size", size)
-
-		if size == 0 { // keepalive message
-			fmt.Println("Keepalive message")
-			messages = append(messages, *NewPeerMessage(nil))
-		} else {
-			message := NewPeerMessage(response[currPossition : currPossition+size])
-			fmt.Println("message type:", message.code)
-			currPossition = currPossition + size
-			messages = append(messages, *message)
-		}
-	}
-
-	return messages
-}
-
-func (peer *Peer) handlePeerMesssage(message *peerMessage) {
-	// if keepalive wait 2 minutes and try again
-	if message.size == 0 {
-		time.Sleep(time.Minute * 2)
-		return
-	}
-
-	switch message.code {
-	case bitfield:
-		peer.Bitset.InternalSet = message.payload
-	case have:
-		indx := int(binary.BigEndian.Uint32(message.payload))
-		peer.Bitset.Set(indx)
-	case interested:
-		peer.PeerStatus.Interested = true
-		// return choke or unchoke
-	case notInterested:
-		peer.PeerStatus.Interested = false
-		// return choke
-	case choke:
-		peer.PeerStatus.Choking = true
-		time.Sleep(time.Second * 30)
-	case unchoke:
-		peer.PeerStatus.Choking = false
-	case request:
-		fmt.Println(peer.Url, "Peer", peer.Url, "requested piece")
-	case piece:
-		peer.PieceCh <- message
-	case cancel:
-		fmt.Println(peer.Url, "Peer", peer.Url, "cancled requested piece")
 	}
 }

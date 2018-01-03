@@ -1,24 +1,22 @@
 package main
 
 import (
-	"strconv"
-
-	"crypto/sha1"
-
 	"bytes"
+	"crypto/sha1"
 	"encoding/binary"
-
 	"math"
-
-	"sync"
-
 	"os"
+	"strconv"
 
 	"github.com/anivanovic/goTit/bitset"
 	"github.com/anivanovic/goTit/metainfo"
+
+	log "github.com/sirupsen/logrus"
 )
 
 var BITTORENT_PROT = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
+
+const blockLength uint32 = 16 * 1024
 
 type Torrent struct {
 	Announce      string
@@ -36,9 +34,10 @@ type Torrent struct {
 	Info          string
 	Comment       string
 	IsDirectory   bool
+	pieceOffset   int
+	numOfBlocks   int
 
-	bitfieldGuard *sync.Mutex
-	Bitset        *bitset.BitSet
+	Bitset *bitset.BitSet
 }
 
 type TorrentFile struct {
@@ -55,7 +54,6 @@ func NewTorrent(dictElement metainfo.DictElement) *Torrent {
 	torrent.Name = dictElement.Value("info.name").String()
 	torrent.Pieces = []byte(dictElement.Value("info.pieces").String())
 	torrent.CreationDate, _ = strconv.ParseInt(dictElement.Value("creation date").String(), 10, 0)
-	torrent.bitfieldGuard = new(sync.Mutex)
 	torrent.Bitset = bitset.NewBitSet(torrent.PieceLength)
 
 	torrent.Info = dictElement.Value("info").Encode()
@@ -98,6 +96,8 @@ func NewTorrent(dictElement metainfo.DictElement) *Torrent {
 		torrent.TorrentFiles = torrentFiles
 		torrent.Length = completeLength
 	}
+	torrent.numOfBlocks = torrent.PieceLength / int(blockLength)
+	torrent.pieceOffset = -1
 
 	if comment := dictElement.Value("comment"); comment != nil {
 		torrent.Comment = comment.(metainfo.StringElement).Value
@@ -120,15 +120,46 @@ func (torrent *Torrent) CreateHandshake(peerId []byte) []byte {
 }
 
 func (torrent *Torrent) SetDownloaded(pieceIndx int) {
-	torrent.bitfieldGuard.Lock()
 	torrent.Bitset.Set(pieceIndx)
-	torrent.bitfieldGuard.Unlock()
 }
 
-func (torrent *Torrent) NextDownladPiece() int {
-	torrent.bitfieldGuard.Lock()
+func (torrent *Torrent) nextDownladPiece() int {
 	index := torrent.Bitset.FirstUnset(0)
-	torrent.bitfieldGuard.Unlock()
+	torrent.SetDownloaded(index)
 
 	return index
+}
+
+func (torrent *Torrent) nextDownladBlock() int {
+	if torrent.pieceOffset < torrent.numOfBlocks-1 {
+		torrent.pieceOffset++
+	} else {
+		torrent.pieceOffset = 0
+	}
+
+	return torrent.pieceOffset
+}
+
+func (torrent *Torrent) CreateNextRequestMessage() []byte {
+	beginOffset := torrent.nextDownladBlock() * int(blockLength)
+
+	// TODO replace call to FirstUnet
+	piece := torrent.Bitset.LastSet(0)
+	if beginOffset == 0 {
+		piece = torrent.nextDownladPiece()
+	}
+
+	message := new(bytes.Buffer)
+	binary.Write(message, binary.BigEndian, uint32(13))
+	binary.Write(message, binary.BigEndian, uint8(request))
+	binary.Write(message, binary.BigEndian, uint32(piece))
+	binary.Write(message, binary.BigEndian, uint32(beginOffset))
+	binary.Write(message, binary.BigEndian, uint32(blockLength))
+	log.WithFields(log.Fields{
+		"piece":  piece,
+		"offset": beginOffset,
+		"length": blockLength,
+	}).Debug("created piece request")
+
+	return message.Bytes()
 }
