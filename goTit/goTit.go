@@ -3,10 +3,8 @@ package main
 import (
 	"encoding/binary"
 	"io/ioutil"
-	"math/rand"
 
 	"net"
-	"net/url"
 	"time"
 
 	"os"
@@ -18,12 +16,9 @@ import (
 )
 
 const (
-	letterBytes           = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	listenPort     uint16 = 8999
 	DownloadFolder        = "C:/Users/Antonije/Downloads/"
 )
-
-var CLIENT_ID = [8]byte{'-', 'G', 'O', '0', '1', '0', '0', '-'}
 
 // set up logger
 func init() {
@@ -35,20 +30,6 @@ func CheckError(err error) {
 	if err != nil {
 		log.Warnf("%T %+v", err, err)
 	}
-}
-
-// implemented BEP20
-func createClientId() []byte {
-	peerId := make([]byte, 20)
-	copy(peerId, CLIENT_ID[:])
-
-	// create remaining random bytes
-	rand.Read(peerId[len(CLIENT_ID):])
-	log.WithFields(log.Fields{
-		"PEER_ID": string(peerId),
-		"size":    len(peerId),
-	}).Info("Created client id")
-	return peerId
 }
 
 func readConn(conn net.Conn) []byte {
@@ -85,14 +66,12 @@ func readHandshake(conn net.Conn) []byte {
 
 func main() {
 	//torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/Alien- Covenant (2017) [720p] [YTS.AG].torrent")
-	torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/viking.torrent")
+	//torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/viking.torrent")
+	torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/ubuntu-16.04.3-desktop-amd64.iso.torrent")
 	torrentString := string(torrentContent)
 	_, benDict := metainfo.Parse(torrentString)
 	log.Info("Parsed torrent file")
 	log.Debug(benDict.String())
-
-	transactionId := uint32(12345612)
-	peerId := createClientId()
 
 	torrent := NewTorrent(*benDict)
 
@@ -101,10 +80,8 @@ func main() {
 	ips := make(map[string]bool)
 
 	for _, trackerUrl := range announceList {
-		u, err := url.Parse(trackerUrl)
-		CheckError(err)
-		if u.Scheme == "udp" {
-			tracker_ips := announce(u, transactionId, torrent.Hash, peerId)
+		tracker_ips := announce(trackerUrl, torrent)
+		if tracker_ips != nil {
 			for k, v := range *tracker_ips {
 				ips[k] = v
 			}
@@ -118,13 +95,13 @@ func main() {
 	pieceCh := make(chan *peerMessage, 1000)
 	waitCh := make(chan bool)
 	go writePiece(pieceCh, torrent)
-	//func() {
+
 	indx := 0
 	for ip, _ := range ips {
 		if indx < 500 {
 			go func(ip string, torrent *Torrent) {
 				peer := NewPeer(ip, torrent, mng, pieceCh)
-				err := peer.Announce(peerId)
+				err := peer.Announce()
 				CheckError(err)
 				if err == nil {
 					peer.GoMessaging()
@@ -133,7 +110,6 @@ func main() {
 			indx++
 		}
 	}
-	//}()
 
 	<-waitCh
 }
@@ -222,10 +198,23 @@ func writePiece(pieceCh <-chan *peerMessage, torrent *Torrent) {
 	}
 }
 
-func announce(u *url.URL, transactionId uint32, hash []byte, peerId []byte) *map[string]bool {
-	tracker := Tracker(u)
-	defer tracker.Close()
-	connId := tracker.Handshake(transactionId)
-	ips := tracker.Announce(connId, hash, transactionId, peerId)
-	return ips
+func announce(url string, torrent *Torrent) *map[string]bool {
+	tracker, err := CreateTracker(url)
+	if err != nil {
+		CheckError(err)
+		return nil
+	}
+
+	if tracker != nil {
+		defer tracker.Close()
+		ips, err := tracker.Announce(torrent)
+		if err != nil {
+			CheckError(err)
+			return nil
+		}
+
+		return ips
+	}
+
+	return nil
 }

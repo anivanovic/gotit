@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"math"
+	"math/rand"
 	"os"
 	"strconv"
 
@@ -15,6 +16,7 @@ import (
 )
 
 var BITTORENT_PROT = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
+var CLIENT_ID = [8]byte{'-', 'G', 'O', '0', '1', '0', '0', '-'}
 
 const blockLength uint32 = 16 * 1024
 
@@ -34,8 +36,12 @@ type Torrent struct {
 	Info          string
 	Comment       string
 	IsDirectory   bool
-	pieceOffset   int
-	numOfBlocks   int
+	PeerId        []byte
+
+	downloaded, uploaded, left int
+
+	pieceOffset int
+	numOfBlocks int
 
 	Bitset *bitset.BitSet
 }
@@ -48,8 +54,11 @@ type TorrentFile struct {
 func NewTorrent(dictElement metainfo.DictElement) *Torrent {
 	//TODO make bencode api simpler
 	torrent := new(Torrent)
+	torrent.PeerId = createClientId()
 	torrent.Announce = dictElement.Value("announce").String()
-	torrent.CreatedBy = dictElement.Value("created by").String()
+	if dictElement.Value("created by") != nil {
+		torrent.CreatedBy = dictElement.Value("created by").String()
+	}
 	torrent.PieceLength, _ = strconv.Atoi(dictElement.Value("info.piece length").String())
 	torrent.Name = dictElement.Value("info.name").String()
 	torrent.Pieces = []byte(dictElement.Value("info.pieces").String())
@@ -95,6 +104,7 @@ func NewTorrent(dictElement metainfo.DictElement) *Torrent {
 		}
 		torrent.TorrentFiles = torrentFiles
 		torrent.Length = completeLength
+		torrent.left = completeLength
 	}
 	torrent.numOfBlocks = torrent.PieceLength / int(blockLength)
 	torrent.pieceOffset = -1
@@ -107,16 +117,30 @@ func NewTorrent(dictElement metainfo.DictElement) *Torrent {
 	return torrent
 }
 
-func (torrent *Torrent) CreateHandshake(peerId []byte) []byte {
+func (torrent *Torrent) CreateHandshake() []byte {
 	request := new(bytes.Buffer)
 	// 19 - as number of letters in protocol type string
 	binary.Write(request, binary.BigEndian, uint8(len(BITTORENT_PROT)))
 	binary.Write(request, binary.BigEndian, BITTORENT_PROT)
 	binary.Write(request, binary.BigEndian, uint64(0))
 	binary.Write(request, binary.BigEndian, torrent.Hash)
-	binary.Write(request, binary.BigEndian, peerId)
+	binary.Write(request, binary.BigEndian, torrent.PeerId)
 
 	return request.Bytes()
+}
+
+// implemented BEP20
+func createClientId() []byte {
+	peerId := make([]byte, 20)
+	copy(peerId, CLIENT_ID[:])
+
+	// create remaining random bytes
+	rand.Read(peerId[len(CLIENT_ID):])
+	log.WithFields(log.Fields{
+		"PEER_ID": string(peerId),
+		"size":    len(peerId),
+	}).Info("Created client id")
+	return peerId
 }
 
 func (torrent *Torrent) SetDownloaded(pieceIndx int) {

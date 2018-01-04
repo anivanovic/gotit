@@ -385,14 +385,14 @@ func (peer *Peer) connect() error {
 	return nil
 }
 
-func (peer *Peer) Announce(peerId []byte) error {
+func (peer *Peer) Announce() error {
 	err := peer.connect()
 	if err != nil {
 		return err
 	}
 	peer.logger.Info("Sending announce message")
 
-	handshake := peer.Torrent.CreateHandshake(peerId)
+	handshake := peer.Torrent.CreateHandshake()
 	peer.Conn.SetDeadline(time.Now().Add(time.Second * 5))
 	peer.Conn.Write(handshake)
 
@@ -401,7 +401,7 @@ func (peer *Peer) Announce(peerId []byte) error {
 
 	read := len(response)
 	peer.logger.WithField("length", read).Info("Read handshake message")
-	valid := checkHandshake(response, peer.Torrent.Hash, peerId)
+	valid := checkHandshake(response, peer.Torrent.Hash, peer.Torrent.PeerId)
 
 	if valid {
 		messages := readResponse(response[68:])
