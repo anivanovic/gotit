@@ -9,8 +9,6 @@ import (
 
 	"os"
 
-	"math"
-
 	"github.com/anivanovic/goTit/metainfo"
 	log "github.com/sirupsen/logrus"
 )
@@ -67,7 +65,7 @@ func readHandshake(conn net.Conn) []byte {
 func main() {
 	//torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/Alien- Covenant (2017) [720p] [YTS.AG].torrent")
 	//torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/viking.torrent")
-	torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/ubuntu-16.04.3-desktop-amd64.iso.torrent")
+	torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/tg.torrent")
 	torrentString := string(torrentContent)
 	_, benDict := metainfo.Parse(torrentString)
 	log.Info("Parsed torrent file")
@@ -128,21 +126,13 @@ func createTorrentFiles(torrent *Torrent) {
 		for _, torrentFile := range torrent.TorrentFiles {
 			file, err := os.Create(torrentDirPath + "/" + torrentFile.Path)
 			CheckError(err)
-			prepopulateFile(file, torrentFile.Length)
 			torrent.OsFiles = append(torrent.OsFiles, file)
 		}
 	} else {
 		torrentFile, err := os.Create(torrentDirPath)
 		CheckError(err)
-		prepopulateFile(torrentFile, torrent.Length)
 		torrent.OsFiles = append(torrent.OsFiles, torrentFile)
 	}
-}
-
-func prepopulateFile(file *os.File, length int) {
-	fileSize := math.Ceil(float64(length) / 8.0)
-	zeroes := make([]byte, int(fileSize))
-	file.Write(zeroes)
 }
 
 func writePiece(pieceCh <-chan *peerMessage, torrent *Torrent) {
