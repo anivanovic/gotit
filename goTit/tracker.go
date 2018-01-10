@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	timeout            = time.Second * 2
+	timeout            = time.Second * 1
 	protocol_id uint64 = 0x41727101980
 )
 

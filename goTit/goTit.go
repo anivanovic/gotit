@@ -9,6 +9,13 @@ import (
 
 	"os"
 
+	"sync"
+
+	"strconv"
+
+	"os/signal"
+	"syscall"
+
 	"github.com/anivanovic/goTit/metainfo"
 	log "github.com/sirupsen/logrus"
 )
@@ -21,7 +28,7 @@ const (
 // set up logger
 func init() {
 	log.SetOutput(os.Stdout)
-	log.SetLevel(log.DebugLevel)
+	log.SetLevel(log.InfoLevel)
 }
 
 func CheckError(err error) {
@@ -63,9 +70,9 @@ func readHandshake(conn net.Conn) []byte {
 }
 
 func main() {
-	//torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/Alien- Covenant (2017) [720p] [YTS.AG].torrent")
+	torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/Wonder Woman (2017) [720p] [YTS.AG].torrent")
 	//torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/viking.torrent")
-	torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/tg.torrent")
+	//torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/tg.torrent")
 	torrentString := string(torrentContent)
 	_, benDict := metainfo.Parse(torrentString)
 	log.Info("Parsed torrent file")
@@ -77,21 +84,33 @@ func main() {
 	announceList = append(announceList, torrent.Announce)
 	ips := make(map[string]bool)
 
-	for _, trackerUrl := range announceList {
-		tracker_ips := announce(trackerUrl, torrent)
-		if tracker_ips != nil {
-			for k, v := range *tracker_ips {
-				ips[k] = v
+	waitCh := make(chan string, 2)
+	lock := sync.Mutex{}
+	for i, trackerUrl := range announceList {
+		go func(url string) {
+			tracker_ips := announceToTracker(url, torrent)
+			if tracker_ips != nil {
+				for k, v := range *tracker_ips {
+					lock.Lock()
+					ips[k] = v
+					lock.Unlock()
+				}
 			}
-		}
+			if i == len(announceList)-1 {
+				time.Sleep(time.Second * 5)
+				waitCh <- strconv.Itoa(len(announceList) - 1)
+			}
+		}(trackerUrl)
 	}
+
+	val := <-waitCh
+	log.Info("Got first " + val)
 
 	log.WithField("size", len(ips)).Info("Peers in pool")
 	createTorrentFiles(torrent)
 
 	mng := NewMng(torrent)
 	pieceCh := make(chan *peerMessage, 1000)
-	waitCh := make(chan bool)
 	go writePiece(pieceCh, torrent)
 
 	indx := 0
@@ -109,7 +128,10 @@ func main() {
 		}
 	}
 
-	<-waitCh
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	signal := <-sigs
+	log.Info("got second " + signal.String())
 }
 
 func createTorrentFiles(torrent *Torrent) {
@@ -188,7 +210,7 @@ func writePiece(pieceCh <-chan *peerMessage, torrent *Torrent) {
 	}
 }
 
-func announce(url string, torrent *Torrent) *map[string]bool {
+func announceToTracker(url string, torrent *Torrent) *map[string]bool {
 	tracker, err := CreateTracker(url)
 	if err != nil {
 		CheckError(err)
