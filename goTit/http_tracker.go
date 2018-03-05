@@ -34,7 +34,7 @@ func (t *http_tracker) Announce(torrent *Torrent) (*map[string]bool, error) {
 	query := t.Url.Query()
 	query.Set("info_hash", string(torrent.Hash))
 	query.Set("peer_id", string(torrent.PeerId))
-	query.Set("port", strconv.Itoa(int(listenPort)))
+	query.Set("port", strconv.Itoa(int(*listenPort)))
 	query.Set("uploaded", "0")
 	query.Set("downloaded", "0")
 	query.Set("left", "0")

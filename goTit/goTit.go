@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/binary"
-	"io/ioutil"
 
 	"net"
 	"time"
@@ -16,19 +15,44 @@ import (
 	"os/signal"
 	"syscall"
 
+	"io/ioutil"
+
+	"flag"
+
+	"os/user"
+
 	"github.com/anivanovic/goTit/metainfo"
 	log "github.com/sirupsen/logrus"
 )
 
-const (
-	listenPort     uint16 = 8999
-	DownloadFolder        = "C:/Users/Antonije/Downloads/"
+var (
+	listenPort     *uint
+	downloadFolder *string
+	torrentPath    *string
+	logLevel       *string
+	peerNum        *int
 )
 
 // set up logger
 func init() {
+	user, _ := user.Current()
+	defaultDownloadFolder := user.HomeDir + string(os.PathSeparator) + "Downloads"
+	if _, err := os.Stat(defaultDownloadFolder); os.IsNotExist(err) {
+		defaultDownloadFolder = user.HomeDir
+	}
+
+	torrentPath = flag.String("file", "", "Path to torrent file")
+	downloadFolder = flag.String("out", defaultDownloadFolder, "Path to download location")
+	listenPort = flag.Uint("port", 8999, "Port used for listening incoming peer requests")
+	logLevel = flag.String("log-level", "fatal", "Log level for printing messages to console")
+	peerNum = flag.Int("peer-num", 500, "Number of concurrent peer download connections")
+
+	level, err := log.ParseLevel(*logLevel)
+	if err != nil {
+		level = log.FatalLevel
+	}
 	log.SetOutput(os.Stdout)
-	log.SetLevel(log.InfoLevel)
+	log.SetLevel(level)
 }
 
 func CheckError(err error) {
@@ -70,9 +94,13 @@ func readHandshake(conn net.Conn) []byte {
 }
 
 func main() {
-	torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/Wonder Woman (2017) [720p] [YTS.AG].torrent")
-	//torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/viking.torrent")
-	//torrentContent, _ := ioutil.ReadFile("C:/Users/Antonije/Downloads/tg.torrent")
+	flag.Parse()
+	if *torrentPath == "" {
+		flag.PrintDefaults()
+		os.Exit(2)
+	}
+
+	torrentContent, _ := ioutil.ReadFile(*torrentPath)
 	torrentString := string(torrentContent)
 	_, benDict := metainfo.Parse(torrentString)
 	log.Info("Parsed torrent file")
@@ -115,7 +143,7 @@ func main() {
 
 	indx := 0
 	for ip, _ := range ips {
-		if indx < 500 {
+		if indx < *peerNum {
 			go func(ip string, torrent *Torrent) {
 				peer := NewPeer(ip, torrent, mng, pieceCh)
 				err := peer.Announce()
@@ -135,13 +163,8 @@ func main() {
 }
 
 func createTorrentFiles(torrent *Torrent) {
-	//user, err := user.Current()
-	//CheckError(err)
 
-	downloadsDir := "D:/Downloads/"
-	torrent.OsFiles = make([]*os.File, 0)
-
-	torrentDirPath := downloadsDir + torrent.Name
+	torrentDirPath := *downloadFolder + torrent.Name
 	if torrent.IsDirectory {
 		err := os.Mkdir(torrentDirPath, os.ModeDir)
 		CheckError(err)
