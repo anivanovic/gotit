@@ -87,19 +87,17 @@ func main() {
 
 	announceList := torrent.Announce_list
 	announceList = append(announceList, torrent.Announce)
-	ips := make(map[string]bool)
+	ips := make(map[string]struct{})
 
 	waitCh := make(chan string, 2)
 	lock := sync.Mutex{}
 	for i, trackerUrl := range announceList {
 		go func(url string, idx int) {
 			tracker_ips := announceToTracker(url, torrent)
-			if tracker_ips != nil {
-				for k, v := range *tracker_ips {
-					lock.Lock()
-					ips[k] = v
-					lock.Unlock()
-				}
+			for k := range tracker_ips {
+				lock.Lock()
+				ips[k] = struct{}{}
+				lock.Unlock()
 			}
 			if idx == len(announceList)-1 {
 				time.Sleep(time.Second * 5)
@@ -119,7 +117,7 @@ func main() {
 	go writePiece(pieceCh, torrent)
 
 	indx := 0
-	for ip, _ := range ips {
+	for ip := range ips {
 		if indx < *peerNum {
 			go func(ip string, torrent *gotit.Torrent) {
 				peer := gotit.NewPeer(ip, torrent, mng, pieceCh)
@@ -209,7 +207,7 @@ func writePiece(pieceCh <-chan *gotit.PeerMessage, torrent *gotit.Torrent) {
 	}
 }
 
-func announceToTracker(url string, torrent *gotit.Torrent) *map[string]bool {
+func announceToTracker(url string, torrent *gotit.Torrent) map[string]struct{} {
 	tracker, err := gotit.CreateTracker(url)
 	if err != nil {
 		gotit.CheckError(err)

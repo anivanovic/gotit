@@ -16,7 +16,7 @@ const (
 )
 
 type Tracker interface {
-	Announce(torrent *Torrent) (*map[string]bool, error)
+	Announce(torrent *Torrent) (map[string]struct{}, error)
 	io.Closer
 }
 

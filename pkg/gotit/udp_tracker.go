@@ -34,7 +34,7 @@ type udp_tracker struct {
 	Url              *url.URL
 	Conn             *net.UDPConn
 	AnnounceInterval int
-	Ips              *map[string]bool
+	Ips              map[string]struct{}
 
 	addr          *net.UDPAddr
 	connectionId  uint64
@@ -58,7 +58,7 @@ func udpTracker(url *url.URL) (Tracker, error) {
 	return &tracker, nil
 }
 
-func (t *udp_tracker) Announce(torrent *Torrent) (*map[string]bool, error) {
+func (t *udp_tracker) Announce(torrent *Torrent) (map[string]struct{}, error) {
 	connId, err := t.handshake()
 	if err != nil {
 		return nil, err
@@ -163,7 +163,7 @@ func readConnect(data []byte, transactionId uint32) (uint64, error) {
 	return connId, nil
 }
 
-func readUdpAnnounce(response []byte, transactionId uint32) (*map[string]bool, error) {
+func readUdpAnnounce(response []byte, transactionId uint32) (map[string]struct{}, error) {
 	if len(response) < 20 {
 		return nil, errors.New("udp announce respons size smaller then minimal size (20)")
 	}
@@ -185,16 +185,16 @@ func readUdpAnnounce(response []byte, transactionId uint32) (*map[string]bool, e
 		"peer count": peerCount,
 	}).Info("CreateTracker message")
 
-	ips := make(map[string]bool, 0)
+	ips := make(map[string]struct{})
 	for read := 0; read < peerCount; read++ {
 		byteMask := 6
 
 		ipAddress := net.IPv4(peerAddresses[byteMask*read], peerAddresses[byteMask*read+1], peerAddresses[byteMask*read+2], peerAddresses[byteMask*read+3])
 		port := binary.BigEndian.Uint16(peerAddresses[byteMask*read+4 : byteMask*read+6])
 		ipAddr := ipAddress.String() + ":" + strconv.Itoa(int(port))
-		ips[ipAddr] = true
+		ips[ipAddr] = struct{}{}
 	}
-	return &ips, nil
+	return ips, nil
 }
 
 func readScrape(response []byte, transactionId uint32) error {

@@ -30,7 +30,7 @@ func httpTracker(url *url.URL) Tracker {
 	return t
 }
 
-func (t *http_tracker) Announce(torrent *Torrent) (*map[string]bool, error) {
+func (t *http_tracker) Announce(torrent *Torrent) (map[string]struct{}, error) {
 	query := t.Url.Query()
 	query.Set("info_hash", string(torrent.Hash))
 	query.Set("peer_id", string(torrent.PeerId))
@@ -71,22 +71,22 @@ func (t *http_tracker) Announce(torrent *Torrent) (*map[string]bool, error) {
 
 func (t *http_tracker) Close() error { return nil }
 
-func readHttpAnnounce(elem metainfo.Bencode) *map[string]bool {
+func readHttpAnnounce(elem metainfo.Bencode) map[string]struct{} {
 	if benDict, ok := elem.(metainfo.DictElement); ok {
 		peers := benDict.Value("peers").String()
 		ipData := []byte(peers)
 		size := len(ipData)
 		peerCount := size / 6
-		ips := make(map[string]bool, 0)
+		ips := make(map[string]struct{})
 		for read := 0; read < peerCount; read++ {
 			byteMask := 6
 
 			ipAddress := net.IPv4(ipData[byteMask*read], ipData[byteMask*read+1], ipData[byteMask*read+2], ipData[byteMask*read+3])
 			port := binary.BigEndian.Uint16(ipData[byteMask*read+4 : byteMask*read+6])
 			ipAddr := ipAddress.String() + ":" + strconv.Itoa(int(port))
-			ips[ipAddr] = true
+			ips[ipAddr] = struct{}{}
 		}
-		return &ips
+		return ips
 	}
 	return nil
 }
