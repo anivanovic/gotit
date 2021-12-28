@@ -92,7 +92,7 @@ func main() {
 	waitCh := make(chan string, 2)
 	lock := sync.Mutex{}
 	for i, trackerUrl := range announceList {
-		go func(url string) {
+		go func(url string, idx int) {
 			tracker_ips := announceToTracker(url, torrent)
 			if tracker_ips != nil {
 				for k, v := range *tracker_ips {
@@ -101,11 +101,11 @@ func main() {
 					lock.Unlock()
 				}
 			}
-			if i == len(announceList)-1 {
+			if idx == len(announceList)-1 {
 				time.Sleep(time.Second * 5)
 				waitCh <- strconv.Itoa(len(announceList) - 1)
 			}
-		}(trackerUrl)
+		}(trackerUrl, i)
 	}
 
 	val := <-waitCh
@@ -140,7 +140,6 @@ func main() {
 }
 
 func createTorrentFiles(torrent *gotit.Torrent) {
-
 	torrentDirPath := *downloadFolder + torrent.Name
 	if torrent.IsDirectory {
 		err := os.Mkdir(torrentDirPath, os.ModeDir)
@@ -158,7 +157,7 @@ func createTorrentFiles(torrent *gotit.Torrent) {
 }
 
 func writePiece(pieceCh <-chan *gotit.PeerMessage, torrent *gotit.Torrent) {
-	for true {
+	for {
 		pieceMsg := <-pieceCh
 		indx := binary.BigEndian.Uint32(pieceMsg.Payload[:4])
 		offset := binary.BigEndian.Uint32(pieceMsg.Payload[4:8])
