@@ -1,4 +1,4 @@
-package main
+package gotit
 
 import (
 	"encoding/binary"
@@ -120,7 +120,7 @@ func createAnnounce(connId uint64, transactionId uint32, torrent *Torrent) []byt
 	randKey := rand.Int31()
 	binary.Write(request, binary.BigEndian, randKey)
 	binary.Write(request, binary.BigEndian, int32(-1))
-	binary.Write(request, binary.BigEndian, listenPort)
+	binary.Write(request, binary.BigEndian, 9404) // TODO here goes listen port
 	return request.Bytes()
 }
 

@@ -21,7 +21,8 @@ import (
 
 	"os/user"
 
-	"github.com/anivanovic/goTit/metainfo"
+	"github.com/anivanovic/gotit/pkg/gotit"
+	"github.com/anivanovic/gotit/pkg/metainfo"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -55,37 +56,13 @@ func init() {
 	log.SetLevel(level)
 }
 
-func CheckError(err error) {
-	if err != nil {
-		log.Warnf("%T %+v", err, err)
-	}
-}
-
-func readConn(conn net.Conn) []byte {
-	response := make([]byte, 0, 4096)
-	tmp := make([]byte, 4096)
-
-	for {
-		conn.SetDeadline(time.Now().Add(timeout))
-		n, err := conn.Read(tmp)
-		if err != nil {
-			CheckError(err)
-			break
-		}
-		log.WithField("read data", n).Info("Read data from connection")
-		response = append(response, tmp[:n]...)
-	}
-
-	return response
-}
-
 func readHandshake(conn net.Conn) []byte {
 	response := make([]byte, 0, 68)
 
-	conn.SetDeadline(time.Now().Add(timeout))
+	conn.SetDeadline(time.Now().Add(time.Second))
 	n, err := conn.Read(response)
 	if err != nil {
-		CheckError(err)
+		gotit.CheckError(err)
 		return response
 	}
 	log.WithField("read data", n).Info("Read data from peer handshake")
@@ -106,7 +83,7 @@ func main() {
 	log.Info("Parsed torrent file")
 	log.Debug(benDict.String())
 
-	torrent := NewTorrent(*benDict)
+	torrent := gotit.NewTorrent(*benDict)
 
 	announceList := torrent.Announce_list
 	announceList = append(announceList, torrent.Announce)
@@ -137,17 +114,17 @@ func main() {
 	log.WithField("size", len(ips)).Info("Peers in pool")
 	createTorrentFiles(torrent)
 
-	mng := NewMng(torrent)
-	pieceCh := make(chan *peerMessage, 1000)
+	mng := gotit.NewMng(torrent)
+	pieceCh := make(chan *gotit.PeerMessage, 1000)
 	go writePiece(pieceCh, torrent)
 
 	indx := 0
 	for ip, _ := range ips {
 		if indx < *peerNum {
-			go func(ip string, torrent *Torrent) {
-				peer := NewPeer(ip, torrent, mng, pieceCh)
+			go func(ip string, torrent *gotit.Torrent) {
+				peer := gotit.NewPeer(ip, torrent, mng, pieceCh)
 				err := peer.Announce()
-				CheckError(err)
+				gotit.CheckError(err)
 				if err == nil {
 					peer.GoMessaging()
 				}
@@ -162,29 +139,29 @@ func main() {
 	log.Info("got second " + signal.String())
 }
 
-func createTorrentFiles(torrent *Torrent) {
+func createTorrentFiles(torrent *gotit.Torrent) {
 
 	torrentDirPath := *downloadFolder + torrent.Name
 	if torrent.IsDirectory {
 		err := os.Mkdir(torrentDirPath, os.ModeDir)
-		CheckError(err)
+		gotit.CheckError(err)
 		for _, torrentFile := range torrent.TorrentFiles {
 			file, err := os.Create(torrentDirPath + "/" + torrentFile.Path)
-			CheckError(err)
+			gotit.CheckError(err)
 			torrent.OsFiles = append(torrent.OsFiles, file)
 		}
 	} else {
 		torrentFile, err := os.Create(torrentDirPath)
-		CheckError(err)
+		gotit.CheckError(err)
 		torrent.OsFiles = append(torrent.OsFiles, torrentFile)
 	}
 }
 
-func writePiece(pieceCh <-chan *peerMessage, torrent *Torrent) {
+func writePiece(pieceCh <-chan *gotit.PeerMessage, torrent *gotit.Torrent) {
 	for true {
 		pieceMsg := <-pieceCh
-		indx := binary.BigEndian.Uint32(pieceMsg.payload[:4])
-		offset := binary.BigEndian.Uint32(pieceMsg.payload[4:8])
+		indx := binary.BigEndian.Uint32(pieceMsg.Payload[:4])
+		offset := binary.BigEndian.Uint32(pieceMsg.Payload[4:8])
 		log.WithFields(log.Fields{
 			"index":  indx,
 			"offset": offset,
@@ -203,14 +180,14 @@ func writePiece(pieceCh <-chan *peerMessage, torrent *Torrent) {
 						"possition": piecePoss,
 					}).Debug("Writting to file ")
 
-					log.WithField("size", pieceMsg.size).Debug("Piece msg for writing")
-					pieceLen := len(pieceMsg.payload[8:])
+					log.Debug("Piece msg for writing")
+					pieceLen := len(pieceMsg.Payload[8:])
 					unoccupiedLength := torFile.Length - piecePoss
 					file := torrent.OsFiles[indx]
 					if unoccupiedLength > pieceLen {
-						file.WriteAt(pieceMsg.payload[8:], int64(piecePoss))
+						file.WriteAt(pieceMsg.Payload[8:], int64(piecePoss))
 					} else {
-						file.WriteAt(pieceMsg.payload[8:8+unoccupiedLength], int64(piecePoss))
+						file.WriteAt(pieceMsg.Payload[8:8+unoccupiedLength], int64(piecePoss))
 						piecePoss += unoccupiedLength
 						file = torrent.OsFiles[indx+1]
 
@@ -218,7 +195,7 @@ func writePiece(pieceCh <-chan *peerMessage, torrent *Torrent) {
 							"file":      file.Name(),
 							"possition": piecePoss,
 						}).Debug("Writting to file ")
-						file.WriteAt(pieceMsg.payload[8+unoccupiedLength:], 0)
+						file.WriteAt(pieceMsg.Payload[8+unoccupiedLength:], 0)
 					}
 					file.Sync()
 					break
@@ -227,16 +204,16 @@ func writePiece(pieceCh <-chan *peerMessage, torrent *Torrent) {
 		} else {
 			files := torrent.OsFiles
 			file := files[0]
-			file.WriteAt(pieceMsg.payload[8:], int64(piecePoss))
+			file.WriteAt(pieceMsg.Payload[8:], int64(piecePoss))
 			file.Sync()
 		}
 	}
 }
 
-func announceToTracker(url string, torrent *Torrent) *map[string]bool {
-	tracker, err := CreateTracker(url)
+func announceToTracker(url string, torrent *gotit.Torrent) *map[string]bool {
+	tracker, err := gotit.CreateTracker(url)
 	if err != nil {
-		CheckError(err)
+		gotit.CheckError(err)
 		return nil
 	}
 
@@ -244,7 +221,7 @@ func announceToTracker(url string, torrent *Torrent) *map[string]bool {
 		defer tracker.Close()
 		ips, err := tracker.Announce(torrent)
 		if err != nil {
-			CheckError(err)
+			gotit.CheckError(err)
 			return nil
 		}
 

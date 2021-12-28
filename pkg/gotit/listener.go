@@ -1,4 +1,4 @@
-package main
+package gotit
 
 import (
 	"fmt"
@@ -53,8 +53,7 @@ func handlePeerConnection(conn net.Conn) {
 
 }
 
-func handlePeerMessages(messages []peerMessage, conn net.Conn) {
-
+func handlePeerMessages(messages []PeerMessage, conn net.Conn) {
 	for _, message := range messages {
 		switch message.code {
 		case notInterested:
@@ -68,7 +67,7 @@ func handlePeerMessages(messages []peerMessage, conn net.Conn) {
 		case choke:
 			fmt.Println("choke")
 		case bitfield:
-			fmt.Printf("bitfield %b\n", message.payload)
+			fmt.Printf("bitfield %b\n", message.Payload)
 		default:
 			fmt.Println("Got", message.code, "code")
 		}

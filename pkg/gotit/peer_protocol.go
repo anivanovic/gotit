@@ -1,4 +1,4 @@
-package main
+package gotit
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ import (
 
 	"math/rand"
 
-	"github.com/anivanovic/goTit/bitset"
+	"github.com/anivanovic/gotit/pkg/bitset"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -44,7 +44,7 @@ type Peer struct {
 	Bitset       *bitset.BitSet
 	PeerStatus   *PeerStatus
 	ClientStatus *PeerStatus
-	PieceCh      chan<- *peerMessage
+	PieceCh      chan<- *PeerMessage
 	start        time.Time
 	logger       *log.Entry
 }
@@ -55,18 +55,18 @@ type PeerStatus struct {
 	Valid      bool
 }
 
-type peerMessage struct {
+type PeerMessage struct {
 	size    uint32
 	code    uint8
-	payload []byte
+	Payload []byte
 }
 
-func NewPeerMessage(data []byte) *peerMessage {
-	var message peerMessage
+func NewPeerMessage(data []byte) *PeerMessage {
+	var message PeerMessage
 	if len(data) == 0 { // keepalive message
-		message = peerMessage{size: 0, code: 99, payload: nil}
+		message = PeerMessage{size: 0, code: 99, Payload: nil}
 	} else {
-		message = peerMessage{size: uint32(len(data)), code: data[0], payload: data[1:]}
+		message = PeerMessage{size: uint32(len(data)), code: data[0], Payload: data[1:]}
 	}
 	return &message
 }
@@ -150,7 +150,7 @@ func newPeerStatus() *PeerStatus {
 	return &PeerStatus{true, false, true}
 }
 
-func NewPeer(ip string, torrent *Torrent, mng *torrentManager, ch chan<- *peerMessage) *Peer {
+func NewPeer(ip string, torrent *Torrent, mng *torrentManager, ch chan<- *PeerMessage) *Peer {
 	logger := log.WithFields(log.Fields{
 		"url": ip,
 	})
@@ -216,7 +216,7 @@ func (peer *Peer) checkKeepAlive() {
 	}
 }
 
-func (peer *Peer) handlePeerMesssage(message *peerMessage) {
+func (peer *Peer) handlePeerMesssage(message *PeerMessage) {
 	// if keepalive wait 2 minutes and try again
 	if message.size == 0 {
 		peer.logger.Debug("Peer sent keepalive")
@@ -227,10 +227,10 @@ func (peer *Peer) handlePeerMesssage(message *peerMessage) {
 	switch message.code {
 	case bitfield:
 		peer.logger.Debug("Peer sent bitfield message")
-		peer.Bitset.InternalSet = message.payload
+		peer.Bitset.InternalSet = message.Payload
 	case have:
 		peer.logger.Debug("Peer sent have message")
-		indx := int(binary.BigEndian.Uint32(message.payload))
+		indx := int(binary.BigEndian.Uint32(message.Payload))
 		peer.Bitset.Set(indx)
 	case interested:
 		peer.logger.Debug("Peer sent interested message")
@@ -276,11 +276,11 @@ func (peer *Peer) sendMessage(message []byte) (int, error) {
 	return n, err
 }
 
-func readResponse(response []byte) []peerMessage {
+func readResponse(response []byte) []PeerMessage {
 	read := len(response)
 	currPossition := 0
 
-	messages := make([]peerMessage, 0)
+	messages := make([]PeerMessage, 0)
 	for currPossition < read {
 		size := int(binary.BigEndian.Uint32(response[currPossition : currPossition+4]))
 		currPossition += 4

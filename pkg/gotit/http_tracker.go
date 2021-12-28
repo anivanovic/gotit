@@ -1,4 +1,4 @@
-package main
+package gotit
 
 import (
 	"net/http"
@@ -13,7 +13,7 @@ import (
 	"encoding/binary"
 	"net"
 
-	"github.com/anivanovic/goTit/metainfo"
+	"github.com/anivanovic/gotit/pkg/metainfo"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -34,7 +34,7 @@ func (t *http_tracker) Announce(torrent *Torrent) (*map[string]bool, error) {
 	query := t.Url.Query()
 	query.Set("info_hash", string(torrent.Hash))
 	query.Set("peer_id", string(torrent.PeerId))
-	query.Set("port", strconv.Itoa(int(*listenPort)))
+	query.Set("port", strconv.Itoa(int(9505))) // TODO here goes listen port
 	query.Set("uploaded", "0")
 	query.Set("downloaded", "0")
 	query.Set("left", "0")
@@ -50,6 +50,7 @@ func (t *http_tracker) Announce(torrent *Torrent) (*map[string]bool, error) {
 
 	defer res.Body.Close()
 	data, err := ioutil.ReadAll(res.Body)
+	CheckError(err)
 
 	body := string(data)
 	logger := log.WithFields(log.Fields{

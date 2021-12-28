@@ -1,4 +1,4 @@
-package main
+package gotit
 
 import (
 	"bytes"
@@ -9,8 +9,8 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/anivanovic/goTit/bitset"
-	"github.com/anivanovic/goTit/metainfo"
+	"github.com/anivanovic/gotit/pkg/bitset"
+	"github.com/anivanovic/gotit/pkg/metainfo"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -69,8 +69,7 @@ func NewTorrent(dictElement metainfo.DictElement) *Torrent {
 
 	sha := sha1.New()
 	sha.Write([]byte(torrent.Info))
-	hash := sha.Sum(nil)
-	torrent.Hash = hash
+	torrent.Hash = sha.Sum(nil)
 
 	trackers := dictElement.Value("announce-list")
 	trackersList, _ := trackers.(metainfo.ListElement)
