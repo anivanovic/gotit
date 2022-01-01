@@ -14,7 +14,7 @@ var (
 
 func Parse(data string) ([]Bencode, error) {
 	sc := NewScanner(data)
-	return sc.parse()
+	return sc.Parse()
 }
 
 type scanner struct {
@@ -31,7 +31,33 @@ func NewScanner(data string) *scanner {
 	}
 }
 
-func (s *scanner) isAtEnd() bool {
+func (s *scanner) Parse() ([]Bencode, error) {
+	elements := make([]Bencode, 0)
+	for !s.IsFinished() {
+		e, err := s.Next()
+		if err != nil {
+			return nil, err
+		}
+		elements = append(elements, e)
+	}
+
+	return elements, nil
+}
+
+func (s *scanner) Next() (Bencode, error) {
+	switch s.advance() {
+	case 'l':
+		return s.readList()
+	case 'd':
+		return s.readDict()
+	case 'i':
+		return s.readInt()
+	default:
+		return s.readString()
+	}
+}
+
+func (s *scanner) IsFinished() bool {
 	return s.current >= len(s.bencode)
 }
 
@@ -41,7 +67,7 @@ func (s *scanner) advance() rune {
 }
 
 func (s scanner) peek() rune {
-	if s.isAtEnd() {
+	if s.IsFinished() {
 		return rune(0) // return '\0' character
 	}
 	return rune(s.bencode[s.current])
@@ -50,6 +76,7 @@ func (s scanner) peek() rune {
 func (s *scanner) match(r rune) bool {
 	if s.peek() == r {
 		s.advance()
+		s.position()
 		return true
 	}
 
@@ -77,41 +104,14 @@ func (s *scanner) number() (int, error) {
 	return strconv.Atoi(value)
 }
 
-func (s *scanner) parse() ([]Bencode, error) {
-	elements := make([]Bencode, 0)
-	for !s.isAtEnd() {
-		s.position()
-		e, err := s.next()
-		if err != nil {
-			return nil, err
-		}
-		elements = append(elements, e)
-	}
-
-	return elements, nil
-}
-
-func (s *scanner) next() (Bencode, error) {
-	switch s.advance() {
-	case 'l':
-		return s.readList()
-	case 'd':
-		return s.readDict()
-	case 'i':
-		return s.readInt()
-	default:
-		return s.readString()
-	}
-}
-
 func (s *scanner) readInt() (*IntElement, error) {
 	s.position()
 	n, err := s.number()
 	if err != nil {
 		return nil, err
 	}
-	i := IntElement{Value: n}
 
+	i := IntElement{Value: n}
 	if !s.match('e') {
 		return nil, ErrElementEnd
 	}
@@ -119,7 +119,7 @@ func (s *scanner) readInt() (*IntElement, error) {
 }
 
 func (s *scanner) readString() (*StringElement, error) {
-	len, err := s.number()
+	length, err := s.number()
 	if err != nil {
 		return nil, err
 	}
@@ -127,24 +127,26 @@ func (s *scanner) readString() (*StringElement, error) {
 	if !s.match(':') {
 		return nil, ErrColonMissing
 	}
-
-	s.position()
-	s.current += len
-	// if s.isAtEnd() {
-	// 	return nil, ErrStringLength
-	// }
+	s.current += length
+	// we need to check if we are trying to read beyond string length.
+	if s.current > len(s.bencode) {
+		return nil, ErrStringLength
+	}
 
 	value := s.read()
 	strElement := StringElement{Value: value}
+	s.position()
 
 	return &strElement, nil
 }
 
 func (s *scanner) readList() (*ListElement, error) {
 	bencodeList := make([]Bencode, 0)
-	for s.peek() != 'e' {
+	s.position()
+
+	for s.peek() != 'e' && !s.IsFinished() {
 		s.position()
-		element, err := s.next()
+		element, err := s.Next()
 		if err != nil {
 			return nil, err
 		}
@@ -159,14 +161,14 @@ func (s *scanner) readList() (*ListElement, error) {
 
 func (s *scanner) readDict() (*DictElement, error) {
 	dict := make(map[StringElement]Bencode)
-	for s.peek() != 'e' {
-		s.position()
+	s.position()
+
+	for s.peek() != 'e' && !s.IsFinished() {
 		k, err := s.readString()
 		if err != nil {
 			return nil, err
 		}
-		s.position()
-		v, err := s.next()
+		v, err := s.Next()
 		if err != nil {
 			return nil, err
 		}

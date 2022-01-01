@@ -57,6 +57,46 @@ func TestParse(t *testing.T) {
 				{Value: "world"}: &StringElement{Value: "me"}}}},
 			wantErr: false,
 		},
+		{
+			name: "string len error",
+			args: args{
+				data: "6:hello",
+			},
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name: "integer not ended",
+			args: args{
+				data: "i45",
+			},
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name: "list not ended",
+			args: args{
+				data: "li42ei22e",
+			},
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name: "dict not ended",
+			args: args{
+				data: "d5:firsti45",
+			},
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name: "string len error in middle of dict",
+			args: args{
+				data: "d2:firsti45e",
+			},
+			want:    nil,
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
