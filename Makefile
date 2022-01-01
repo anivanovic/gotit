@@ -6,6 +6,9 @@ clean:
 	rm -rf bin/*
 
 gotit:
-	go build -o bin/gotit cmd/gotit.go
+	go build -o bin/gotit cmd/gotit/main.go
 
-.PHONY: clean run
+bencode:
+	go run cmd/bencode/main.go -file=$(file)
+
+.PHONY: clean run 
