@@ -79,11 +79,17 @@ func main() {
 
 	torrentContent, _ := ioutil.ReadFile(*torrentPath)
 	torrentString := string(torrentContent)
-	_, benDict := metainfo.Parse(torrentString)
+	benDict, _ := metainfo.Parse(torrentString)
 	log.Info("Parsed torrent file")
 	log.Debug(benDict.String())
 
-	torrent := gotit.NewTorrent(*benDict)
+	// TODO: handle this better
+	dict, ok := benDict.(metainfo.DictElement)
+	if !ok {
+		log.Fatal("Invalid torrent file")
+	}
+
+	torrent := gotit.NewTorrent(dict)
 
 	announceList := torrent.Announce_list
 	announceList = append(announceList, torrent.Announce)

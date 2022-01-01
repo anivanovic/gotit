@@ -2,85 +2,180 @@ package metainfo
 
 import (
 	"errors"
-	"fmt"
 	"strconv"
-	"strings"
+	"unicode"
 )
 
-func Decode(data string) (string, Bencode) {
-	startTag := string(data[0])
+var (
+	ErrElementEnd   = errors.New("element not ended with 'e'")
+	ErrColonMissing = errors.New("missing ':' in string element")
+	ErrStringLength = errors.New("string length invalid")
+)
 
-	switch startTag {
-	case "l":
-		return readList(data)
-	case "d":
-		return readDict(data)
-	case "i":
-		return readInt(data)
+type scanner struct {
+	start   int
+	current int
+	bencode string
+}
+
+func initScanner(data string) *scanner {
+	return &scanner{
+		start:   0,
+		current: 0,
+		bencode: data,
+	}
+}
+
+func (s *scanner) isAtEnd() bool {
+	return s.current >= len(s.bencode)
+}
+
+func (s *scanner) advance() rune {
+	s.current++
+	return rune(s.bencode[s.current-1])
+}
+
+func (s scanner) peek() rune {
+	if s.isAtEnd() {
+		return rune(0) // return '\0' character
+	}
+	return rune(s.bencode[s.current])
+}
+
+func (s scanner) match(r rune) bool {
+	if s.peek() == r {
+		s.advance()
+		return true
+	}
+
+	return false
+}
+
+func (s scanner) read() string {
+	return s.bencode[s.start:s.current]
+}
+
+func (s *scanner) pos() {
+	s.start = s.current
+}
+
+func (s scanner) isDigit() bool {
+	return unicode.IsDigit(s.peek())
+}
+
+func (s scanner) number() (int, error) {
+	for s.isDigit() {
+		s.advance()
+	}
+	value := s.read()
+	s.pos()
+	return strconv.Atoi(value)
+}
+
+func (s *scanner) parse() ([]Bencode, error) {
+	elements := make([]Bencode, 0)
+	for !s.isAtEnd() {
+		s.pos()
+		e, err := s.nextElement()
+		if err != nil {
+			return nil, err
+		}
+		elements = append(elements, e)
+	}
+
+	return elements, nil
+}
+
+func (s *scanner) nextElement() (Bencode, error) {
+	switch s.advance() {
+	case 'l':
+		return s.readList()
+	case 'd':
+		return s.readDict()
+	case 'i':
+		return s.readInt()
 	default:
-		return readString(data)
+		return s.readString()
 	}
 }
 
-func Parse(data string) (error, *DictElement) {
-	_, bencode := Decode(data)
-
-	if benDict, ok := bencode.(DictElement); ok {
-		return nil, &benDict
-	} else {
-		return errors.New("Invalid torrent file"), nil
+func (s *scanner) readInt() (*IntElement, error) {
+	n, err := s.number()
+	if err != nil {
+		return nil, err
 	}
+	i := IntElement{Value: n}
+
+	if !s.match('e') {
+		return nil, ErrElementEnd
+	}
+	return &i, nil
 }
 
-func readInt(data string) (string, IntElement) {
-	valueEndIndex := strings.Index(data, "e")
-	value := data[1:valueEndIndex]
-	intVal, _ := strconv.Atoi(value)
+func (s *scanner) readString() (*StringElement, error) {
+	len, err := s.number()
+	if err != nil {
+		return nil, err
+	}
 
-	i := IntElement{Value: intVal}
+	if !s.match(':') {
+		return nil, ErrColonMissing
+	}
 
-	return data[valueEndIndex+1:], i
+	s.pos()
+	s.current += len
+	if s.isAtEnd() {
+		return nil, ErrStringLength
+	}
+
+	value := s.read()
+	strElement := StringElement{Value: value}
+
+	return &strElement, nil
 }
 
-func readString(data string) (string, StringElement) {
-	stringValueIndex := strings.Index(data, ":") + 1
-
-	valueLen, _ := strconv.Atoi(data[:stringValueIndex-1])
-	value := data[stringValueIndex : stringValueIndex+valueLen]
-	s := StringElement{Value: value}
-
-	return data[stringValueIndex+valueLen:], s
-}
-
-func readList(data string) (string, ListElement) {
-	data = data[1:] // remove l
-
+func (s *scanner) readList() (*ListElement, error) {
 	bencodeList := make([]Bencode, 0)
-	var element Bencode
-	for strings.Index(data, "e") != 0 {
-		data, element = Decode(data)
-		if element == nil {
-			fmt.Println("citanje nil element")
+	for s.peek() != 'e' {
+		s.pos()
+		element, err := s.nextElement()
+		if err != nil {
+			return nil, err
 		}
 		bencodeList = append(bencodeList, element)
 	}
-
-	return data[1:], ListElement{List: bencodeList}
-}
-
-func readDict(data string) (string, DictElement) {
-	data = data[1:] // remove d
-
-	dict := make(map[StringElement]Bencode)
-	order := make([]StringElement, 0)
-	var k StringElement
-	var v Bencode
-	for strings.Index(data, "e") != 0 {
-		data, k = readString(data)
-		data, v = Decode(data)
-		dict[k] = v
-		order = append(order, k)
+	if !s.match('e') {
+		return nil, ErrElementEnd
 	}
 
-	return data[1:], DictElement{Dict: dict, order: order}
+	return &ListElement{List: bencodeList}, nil
+}
+
+func (s *scanner) readDict() (*DictElement, error) {
+	dict := make(map[StringElement]Bencode)
+	order := make([]StringElement, 0)
+	for s.peek() != 'e' {
+		s.pos()
+		k, err := s.readString()
+		if err != nil {
+			return nil, err
+		}
+		v, err := s.nextElement()
+		if err != nil {
+			return nil, err
+		}
+
+		dict[*k] = v
+		order = append(order, *k)
+	}
+	if !s.match('e') {
+		return nil, ErrElementEnd
+	}
+
+	return &DictElement{Dict: dict, order: order}, nil
+}
+
+func Parse(data string) (Bencode, error) {
+	sc := initScanner(data)
+	return sc.nextElement()
 }
