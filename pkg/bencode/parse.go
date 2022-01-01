@@ -153,7 +153,6 @@ func (s *scanner) readList() (*ListElement, error) {
 
 func (s *scanner) readDict() (*DictElement, error) {
 	dict := make(map[StringElement]Bencode)
-	order := make([]StringElement, 0)
 	for s.peek() != 'e' {
 		s.pos()
 		k, err := s.readString()
@@ -166,13 +165,12 @@ func (s *scanner) readDict() (*DictElement, error) {
 		}
 
 		dict[*k] = v
-		order = append(order, *k)
 	}
 	if !s.match('e') {
 		return nil, ErrElementEnd
 	}
 
-	return &DictElement{Dict: dict, order: order}, nil
+	return &DictElement{Dict: dict}, nil
 }
 
 func Parse(data string) (Bencode, error) {

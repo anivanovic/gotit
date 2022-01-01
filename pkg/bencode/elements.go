@@ -76,8 +76,7 @@ func (bencode ListElement) Encode() string {
 }
 
 type DictElement struct {
-	Dict  map[StringElement]Bencode
-	order []StringElement
+	Dict map[StringElement]Bencode
 }
 
 func (bencode DictElement) Type() string {
@@ -90,12 +89,10 @@ func (bencode DictElement) String() string {
 
 func (bencode DictElement) Encode() string {
 	encoded := "d"
-
-	for _, key := range bencode.order {
-		encoded += key.Encode()
-		encoded += bencode.Dict[key].Encode()
+	for k, v := range bencode.Dict {
+		encoded += k.Encode()
+		encoded += v.Encode()
 	}
-
 	encoded += "e"
 
 	return encoded
@@ -105,8 +102,8 @@ func (bencode DictElement) printValue(value Bencode, tabs string) string {
 	dict, ok := value.(DictElement)
 	if ok {
 		var data = "{\n"
-		for _, k := range dict.order {
-			data += tabs + k.String() + ": " + bencode.printValue(dict.Dict[k], tabs+"\t") + "\n"
+		for k, v := range dict.Dict {
+			data += tabs + k.String() + ": " + bencode.printValue(v, tabs+"\t") + "\n"
 		}
 
 		return data + "}\n"
