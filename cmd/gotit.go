@@ -21,8 +21,8 @@ import (
 
 	"os/user"
 
+	"github.com/anivanovic/gotit/pkg/bencode"
 	"github.com/anivanovic/gotit/pkg/gotit"
-	"github.com/anivanovic/gotit/pkg/metainfo"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -79,12 +79,12 @@ func main() {
 
 	torrentContent, _ := ioutil.ReadFile(*torrentPath)
 	torrentString := string(torrentContent)
-	benDict, _ := metainfo.Parse(torrentString)
+	benDict, _ := bencode.Parse(torrentString)
 	log.Info("Parsed torrent file")
 	log.Debug(benDict.String())
 
 	// TODO: handle this better
-	dict, ok := benDict.(metainfo.DictElement)
+	dict, ok := benDict.(bencode.DictElement)
 	if !ok {
 		log.Fatal("Invalid torrent file")
 	}

@@ -13,7 +13,7 @@ import (
 	"encoding/binary"
 	"net"
 
-	"github.com/anivanovic/gotit/pkg/metainfo"
+	"github.com/anivanovic/gotit/pkg/bencode"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -64,15 +64,15 @@ func (t *http_tracker) Announce(torrent *Torrent) (map[string]struct{}, error) {
 	}
 
 	logger.WithField("body", body).Debug("Http tracker announce response")
-	dict, _ := metainfo.Parse(body)
+	dict, _ := bencode.Parse(body)
 	ips := readHttpAnnounce(dict)
 	return ips, nil
 }
 
 func (t *http_tracker) Close() error { return nil }
 
-func readHttpAnnounce(elem metainfo.Bencode) map[string]struct{} {
-	if benDict, ok := elem.(metainfo.DictElement); ok {
+func readHttpAnnounce(elem bencode.Bencode) map[string]struct{} {
+	if benDict, ok := elem.(bencode.DictElement); ok {
 		peers := benDict.Value("peers").String()
 		ipData := []byte(peers)
 		size := len(ipData)

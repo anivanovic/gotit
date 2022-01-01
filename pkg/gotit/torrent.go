@@ -9,8 +9,8 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/anivanovic/gotit/pkg/bencode"
 	"github.com/anivanovic/gotit/pkg/bitset"
-	"github.com/anivanovic/gotit/pkg/metainfo"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -51,7 +51,7 @@ type TorrentFile struct {
 	Length int
 }
 
-func NewTorrent(dictElement metainfo.DictElement) *Torrent {
+func NewTorrent(dictElement bencode.DictElement) *Torrent {
 	//TODO make bencode api simpler
 	torrent := new(Torrent)
 	torrent.PeerId = createClientId()
@@ -72,30 +72,30 @@ func NewTorrent(dictElement metainfo.DictElement) *Torrent {
 	torrent.Hash = sha.Sum(nil)
 
 	trackers := dictElement.Value("announce-list")
-	trackersList, _ := trackers.(metainfo.ListElement)
+	trackersList, _ := trackers.(bencode.ListElement)
 
 	announceList := make([]string, 0)
 	for _, elem := range trackersList.List {
-		elemList, _ := elem.(metainfo.ListElement)
+		elemList, _ := elem.(bencode.ListElement)
 		announceList = append(announceList, elemList.List[0].String())
 	}
 	torrent.Announce_list = announceList
 
 	if dictElement.Value("info.length") != nil {
 		torrent.IsDirectory = false
-		torrent.Length = dictElement.Value("info.length").(metainfo.IntElement).Value
+		torrent.Length = dictElement.Value("info.length").(bencode.IntElement).Value
 	} else {
 		torrent.IsDirectory = true
 		files := dictElement.Value("info.files")
-		filesList, _ := files.(metainfo.ListElement)
+		filesList, _ := files.(bencode.ListElement)
 
 		torrentFiles := make([]TorrentFile, 0)
 		var completeLength int = 0
 		for _, file := range filesList.List {
-			fileDict, _ := file.(metainfo.DictElement)
-			length := fileDict.Value("length").(metainfo.IntElement)
-			pathList, _ := fileDict.Value("path").(metainfo.ListElement)
-			torrentFile := TorrentFile{Path: pathList.List[0].(metainfo.StringElement).Value,
+			fileDict, _ := file.(bencode.DictElement)
+			length := fileDict.Value("length").(bencode.IntElement)
+			pathList, _ := fileDict.Value("path").(bencode.ListElement)
+			torrentFile := TorrentFile{Path: pathList.List[0].(bencode.StringElement).Value,
 				Length: length.Value}
 			completeLength += torrentFile.Length
 
@@ -109,7 +109,7 @@ func NewTorrent(dictElement metainfo.DictElement) *Torrent {
 	torrent.pieceOffset = -1
 
 	if comment := dictElement.Value("comment"); comment != nil {
-		torrent.Comment = comment.(metainfo.StringElement).Value
+		torrent.Comment = comment.(bencode.StringElement).Value
 	}
 	torrent.PiecesNum = int(math.Ceil(float64(torrent.Length) / float64(torrent.PieceLength)))
 
