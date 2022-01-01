@@ -79,11 +79,12 @@ func main() {
 
 	torrentContent, _ := ioutil.ReadFile(*torrentPath)
 	torrentString := string(torrentContent)
-	benDict, _ := bencode.Parse(torrentString)
+	benc, _ := bencode.Parse(torrentString)
 	log.Info("Parsed torrent file")
-	log.Debug(benDict.String())
 
 	// TODO: handle this better
+	benDict := benc[0]
+	log.Debug(benDict.String())
 	dict, ok := benDict.(bencode.DictElement)
 	if !ok {
 		log.Fatal("Invalid torrent file")

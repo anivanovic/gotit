@@ -64,7 +64,8 @@ func (t *http_tracker) Announce(torrent *Torrent) (map[string]struct{}, error) {
 	}
 
 	logger.WithField("body", body).Debug("Http tracker announce response")
-	dict, _ := bencode.Parse(body)
+	benc, _ := bencode.Parse(body)
+	dict := benc[0]
 	ips := readHttpAnnounce(dict)
 	return ips, nil
 }
