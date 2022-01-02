@@ -1,6 +1,7 @@
 package gotit
 
 import (
+	"errors"
 	"net"
 	"net/url"
 	"time"
@@ -33,8 +34,7 @@ func CreateTracker(urlString string) (Tracker, error) {
 	case "http":
 		return httpTracker(url), nil
 	default:
-		log.WithField("url", urlString).Warn("Unsupported tracker protocol")
-		return nil, nil // return error
+		return nil, errors.New("unsupported protocol")
 	}
 }
 

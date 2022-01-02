@@ -221,16 +221,12 @@ func announceToTracker(url string, torrent *gotit.Torrent) map[string]struct{} {
 		return nil
 	}
 
-	if tracker != nil {
-		defer tracker.Close()
-		ips, err := tracker.Announce(torrent)
-		if err != nil {
-			gotit.CheckError(err)
-			return nil
-		}
-
-		return ips
+	defer tracker.Close()
+	ips, err := tracker.Announce(torrent)
+	if err != nil {
+		gotit.CheckError(err)
+		return nil
 	}
 
-	return nil
+	return ips
 }
