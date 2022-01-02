@@ -12,6 +12,11 @@ var (
 	ErrStringLength = errors.New("string length invalid")
 )
 
+var (
+	stringNil = StringElement("")
+	intNil    = IntElement(0)
+)
+
 func Parse(data string) ([]Bencode, error) {
 	sc := NewScanner(data)
 	return sc.Parse()
@@ -104,43 +109,41 @@ func (s *scanner) number() (int, error) {
 	return strconv.Atoi(value)
 }
 
-func (s *scanner) readInt() (*IntElement, error) {
+func (s *scanner) readInt() (IntElement, error) {
 	s.position()
 	n, err := s.number()
 	if err != nil {
-		return nil, err
+		return intNil, err
 	}
 
-	i := IntElement{Value: n}
 	if !s.match('e') {
-		return nil, ErrElementEnd
+		return intNil, ErrElementEnd
 	}
-	return &i, nil
+	return IntElement(n), nil
 }
 
-func (s *scanner) readString() (*StringElement, error) {
+func (s *scanner) readString() (StringElement, error) {
 	length, err := s.number()
 	if err != nil {
-		return nil, err
+		return stringNil, err
 	}
 
 	if !s.match(':') {
-		return nil, ErrColonMissing
+		return stringNil, ErrColonMissing
 	}
 	s.current += length
 	// we need to check if we are trying to read beyond string length.
 	if s.current > len(s.bencode) {
-		return nil, ErrStringLength
+		return stringNil, ErrStringLength
 	}
 
-	value := s.read()
-	strElement := StringElement{Value: value}
+	strElement := StringElement(s.read())
 	s.position()
 
-	return &strElement, nil
+	return strElement, nil
 }
 
-func (s *scanner) readList() (*ListElement, error) {
+func (s *scanner) readList() (ListElement, error) {
 	bencodeList := make([]Bencode, 0)
 	s.position()
 
@@ -156,10 +159,10 @@ func (s *scanner) readList() (*ListElement, error) {
 		return nil, ErrElementEnd
 	}
 
-	return &ListElement{List: bencodeList}, nil
+	return ListElement(bencodeList), nil
 }
 
-func (s *scanner) readDict() (*DictElement, error) {
+func (s *scanner) readDict() (DictElement, error) {
 	dict := make(map[StringElement]Bencode)
 	s.position()
 
@@ -173,11 +176,11 @@ func (s *scanner) readDict() (*DictElement, error) {
 			return nil, err
 		}
 
-		dict[*k] = v
+		dict[k] = v
 	}
 	if !s.match('e') {
 		return nil, ErrElementEnd
 	}
 
-	return &DictElement{Dict: dict}, nil
+	return DictElement(dict), nil
 }

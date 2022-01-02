@@ -28,7 +28,7 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "i45902e",
 			},
-			want:    []Bencode{&IntElement{Value: 45902}},
+			want:    []Bencode{IntElement(45902)},
 			wantErr: false,
 		},
 		{
@@ -36,7 +36,7 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "5:hello",
 			},
-			want:    []Bencode{&StringElement{Value: "hello"}},
+			want:    []Bencode{StringElement("hello")},
 			wantErr: false,
 		},
 		{
@@ -44,7 +44,7 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "li45902e5:helloe",
 			},
-			want:    []Bencode{&ListElement{List: []Bencode{&IntElement{Value: 45902}, &StringElement{Value: "hello"}}}},
+			want:    []Bencode{ListElement([]Bencode{IntElement(45902), StringElement("hello")})},
 			wantErr: false,
 		},
 		{
@@ -52,9 +52,9 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "d5:helloi45902e5:world2:mee",
 			},
-			want: []Bencode{&DictElement{Dict: map[StringElement]Bencode{
-				{Value: "hello"}: &IntElement{Value: 45902},
-				{Value: "world"}: &StringElement{Value: "me"}}}},
+			want: []Bencode{DictElement(map[StringElement]Bencode{
+				"hello": IntElement(45902),
+				"world": StringElement("me")})},
 			wantErr: false,
 		},
 		{
