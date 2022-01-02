@@ -1,6 +1,7 @@
 package gotit
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 
@@ -30,7 +31,7 @@ func httpTracker(url *url.URL) Tracker {
 	return t
 }
 
-func (t *http_tracker) Announce(torrent *Torrent) (map[string]struct{}, error) {
+func (t *http_tracker) Announce(ctx context.Context, torrent *Torrent) (map[string]struct{}, error) {
 	query := t.Url.Query()
 	query.Set("info_hash", string(torrent.Hash))
 	query.Set("peer_id", string(torrent.PeerId))

@@ -1,7 +1,9 @@
 package gotit
 
 import (
+	"context"
 	"encoding/binary"
+	"fmt"
 	"math/rand"
 	"net"
 	"net/url"
@@ -16,80 +18,85 @@ import (
 )
 
 const (
-	CONNECT = iota
-	ANNOUNCE
-	SCRAPE
-	ERROR
+	connect = iota
+	announce
+	scrape
+	con_error
 )
 
 const (
-	NONE = iota
-	COMPLETED
-	STARTED
-	STOPPED
+	none = iota
+	completed
+	started
+	stopped
 )
 
 // BEP15
 type udp_tracker struct {
-	Url              *url.URL
 	Conn             *net.UDPConn
 	AnnounceInterval int
 	Ips              map[string]struct{}
 
-	addr          *net.UDPAddr
 	connectionId  uint64
 	transactionId uint32
 }
 
 func udpTracker(url *url.URL) (Tracker, error) {
-	addr, err := net.ResolveUDPAddr(url.Scheme, url.Host)
+	raddr, err := net.ResolveUDPAddr(url.Scheme, url.Host)
 	if err != nil {
 		CheckError(err)
 		return nil, err
 	}
 
-	conn, err := net.ListenUDP(url.Scheme, nil)
+	conn, err := net.DialUDP(url.Scheme, nil, raddr)
 	if err != nil {
 		CheckError(err)
 		return nil, err
 	}
 
-	tracker := udp_tracker{url, conn, 0, nil, addr, 0, 0}
+	tracker := udp_tracker{conn, 0, nil, 0, 0}
 	return &tracker, nil
-}
-
-func (t *udp_tracker) Announce(torrent *Torrent) (map[string]struct{}, error) {
-	connId, err := t.handshake()
-	if err != nil {
-		return nil, err
-	}
-
-	transactionId := createTransactionId()
-	request := createAnnounce(connId, transactionId, torrent)
-
-	t.Conn.SetDeadline(time.Now().Add(timeout))
-	t.Conn.WriteTo(request, t.addr)
-	log.WithField("ip", t.Url.String()).Info("Announce sent to tracker")
-	response := readConn(t.Conn)
-
-	err = t.readTrackerResponse(response, transactionId)
-	return t.Ips, err
 }
 
 func (t *udp_tracker) Close() error {
 	return t.Conn.Close()
 }
 
-func (t *udp_tracker) handshake() (uint64, error) {
-	request := new(bytes.Buffer)
-	transactionId := createTransactionId()
+func (t *udp_tracker) Announce(ctx context.Context, torrent *Torrent) (map[string]struct{}, error) {
+	connId, err := t.handshake(ctx)
+	if err != nil {
+		return nil, err
+	}
 
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(timeout)
+	}
+	t.Conn.SetDeadline(deadline)
+
+	transactionId := createTransactionId()
+	request := createAnnounce(connId, transactionId, torrent)
+	t.Conn.Write(request)
+	log.WithField("ip", t.Conn.RemoteAddr()).Info("Announce sent to tracker")
+	response := readConn(t.Conn)
+
+	err = t.readTrackerResponse(response, transactionId)
+	return t.Ips, err
+}
+
+func (t *udp_tracker) handshake(ctx context.Context) (uint64, error) {
+	transactionId := createTransactionId()
+	request := new(bytes.Buffer)
 	binary.Write(request, binary.BigEndian, protocol_id)
-	binary.Write(request, binary.BigEndian, uint32(CONNECT))
+	binary.Write(request, binary.BigEndian, uint32(connect))
 	binary.Write(request, binary.BigEndian, transactionId)
 
-	t.Conn.SetDeadline(time.Now().Add(timeout))
-	_, err := t.Conn.WriteTo(request.Bytes(), t.addr)
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(timeout)
+	}
+	t.Conn.SetDeadline(deadline)
+	_, err := t.Conn.Write(request.Bytes())
 	if err != nil {
 		return 0, err
 	}
@@ -105,17 +112,38 @@ func (t *udp_tracker) handshake() (uint64, error) {
 	return t.connectionId, nil
 }
 
+func (t *udp_tracker) readTrackerResponse(response []byte, transactionId uint32) error {
+	actionCode := int(binary.BigEndian.Uint32(response[:4]))
+	var err error
+
+	switch actionCode {
+	case connect:
+		t.connectionId, err = readConnect(response, transactionId)
+	case announce:
+		t.Ips, err = readAnnounce(response, transactionId)
+	case scrape:
+		err = readScrape(response, transactionId)
+	case con_error:
+		// reads error message and always returns error
+		return readError(response, transactionId)
+	default:
+		err = fmt.Errorf("unrecognized udp tracker response action code: %d", actionCode)
+	}
+
+	return err
+}
+
 func createAnnounce(connId uint64, transactionId uint32, torrent *Torrent) []byte {
 	request := new(bytes.Buffer)
 	binary.Write(request, binary.BigEndian, connId)
-	binary.Write(request, binary.BigEndian, uint32(ANNOUNCE))
+	binary.Write(request, binary.BigEndian, uint32(announce))
 	binary.Write(request, binary.BigEndian, transactionId)
 	binary.Write(request, binary.BigEndian, torrent.Hash)
 	binary.Write(request, binary.BigEndian, torrent.PeerId)
 	binary.Write(request, binary.BigEndian, uint64(torrent.downloaded))
 	binary.Write(request, binary.BigEndian, uint64(torrent.left))
 	binary.Write(request, binary.BigEndian, uint64(torrent.uploaded))
-	binary.Write(request, binary.BigEndian, uint32(NONE))
+	binary.Write(request, binary.BigEndian, uint32(none))
 	binary.Write(request, binary.BigEndian, uint32(0))
 	randKey := rand.Int31()
 	binary.Write(request, binary.BigEndian, randKey)
@@ -124,61 +152,39 @@ func createAnnounce(connId uint64, transactionId uint32, torrent *Torrent) []byt
 	return request.Bytes()
 }
 
-func (t *udp_tracker) readTrackerResponse(response []byte, transactionId uint32) error {
-	actionCode := int(binary.BigEndian.Uint32(response[:4]))
-	var err error
-	switch actionCode {
-	case CONNECT:
-		var connId uint64
-		connId, err = readConnect(response, transactionId)
-		t.connectionId = connId
-	case ANNOUNCE:
-		t.Ips, err = readUdpAnnounce(response, transactionId)
-	case SCRAPE:
-		err = readScrape(response, transactionId)
-	case ERROR:
-		err = readError(response, transactionId)
-	default:
-		err = errors.New("unrecognized udp tracker response. action code: " + strconv.Itoa(actionCode))
-	}
-
-	return err
-}
-
 func readConnect(data []byte, transactionId uint32) (uint64, error) {
 	if len(data) < 16 {
-		return 0, errors.New("udp connect respons size smaller then minimal size (16)")
+		return 0, errors.New("udp connect respons size less then 16")
 	}
-
-	if err := checkTransactionId(data, transactionId); err != nil {
+	if err := checkResponseTransactionId(data, transactionId); err != nil {
 		return 0, err
 	}
 
-	connId := binary.BigEndian.Uint64(data[8:16])
+	conId := binary.BigEndian.Uint64(data[8:16])
 	log.WithFields(log.Fields{
-		"connection id": connId,
-		"resCode":       CONNECT,
+		"connection id": conId,
+		"resCode":       connect,
 	}).Info("CreateTracker handshake response")
 
-	return connId, nil
+	return conId, nil
 }
 
-func readUdpAnnounce(response []byte, transactionId uint32) (map[string]struct{}, error) {
+func readAnnounce(response []byte, transactionId uint32) (map[string]struct{}, error) {
 	if len(response) < 20 {
-		return nil, errors.New("udp announce respons size smaller then minimal size (20)")
+		return nil, errors.New("udp announce respons size less then 20")
 	}
-	if err := checkTransactionId(response, transactionId); err != nil {
+	if err := checkResponseTransactionId(response, transactionId); err != nil {
 		return nil, err
 	}
 
 	interval := binary.BigEndian.Uint32(response[8:12])
 	leachers := binary.BigEndian.Uint32(response[12:16])
 	seaders := binary.BigEndian.Uint32(response[16:20])
-	peerCount := (len(response) - 20) / 6
 	peerAddresses := response[20:]
+	peerCount := len(peerAddresses) / 6
 
 	log.WithFields(log.Fields{
-		"resCode":    ANNOUNCE,
+		"resCode":    announce,
 		"interval":   interval,
 		"leachers":   leachers,
 		"seaders":    seaders,
@@ -186,11 +192,10 @@ func readUdpAnnounce(response []byte, transactionId uint32) (map[string]struct{}
 	}).Info("CreateTracker message")
 
 	ips := make(map[string]struct{})
-	for read := 0; read < peerCount; read++ {
+	for i := 0; i < peerCount; i++ {
 		byteMask := 6
-
-		ipAddress := net.IPv4(peerAddresses[byteMask*read], peerAddresses[byteMask*read+1], peerAddresses[byteMask*read+2], peerAddresses[byteMask*read+3])
-		port := binary.BigEndian.Uint16(peerAddresses[byteMask*read+4 : byteMask*read+6])
+		ipAddress := net.IPv4(peerAddresses[byteMask*i], peerAddresses[byteMask*i+1], peerAddresses[byteMask*i+2], peerAddresses[byteMask*i+3])
+		port := binary.BigEndian.Uint16(peerAddresses[byteMask*i+4 : byteMask*i+6])
 		ipAddr := ipAddress.String() + ":" + strconv.Itoa(int(port))
 		ips[ipAddr] = struct{}{}
 	}
@@ -204,9 +209,9 @@ func readScrape(response []byte, transactionId uint32) error {
 
 func readError(response []byte, transactionId uint32) error {
 	if len(response) < 8 {
-		return errors.New("udp error respons size smaller then minimal size (8)")
+		return errors.New("udp error respons size less then 8")
 	}
-	if err := checkTransactionId(response, transactionId); err != nil {
+	if err := checkResponseTransactionId(response, transactionId); err != nil {
 		return err
 	}
 
@@ -218,10 +223,10 @@ func createTransactionId() uint32 {
 	return rand.Uint32()
 }
 
-func checkTransactionId(response []byte, transactionId uint32) error {
-	resTransactionId := binary.BigEndian.Uint32(response[4:8])
-	if transactionId != resTransactionId {
-		return errors.New("udp response transaction_id not the same as id sent")
+func checkResponseTransactionId(response []byte, transactionId uint32) error {
+	responseId := binary.BigEndian.Uint32(response[4:8])
+	if transactionId != responseId {
+		return errors.New("udp response transaction_id not the same as sent")
 	}
 
 	return nil

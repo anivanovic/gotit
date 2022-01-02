@@ -1,6 +1,7 @@
 package gotit
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/url"
@@ -17,7 +18,7 @@ const (
 )
 
 type Tracker interface {
-	Announce(torrent *Torrent) (map[string]struct{}, error)
+	Announce(ctx context.Context, torrent *Torrent) (map[string]struct{}, error)
 	io.Closer
 }
 
