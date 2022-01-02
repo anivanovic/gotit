@@ -74,7 +74,8 @@ func NewTorrent(dictElement bencode.DictElement) *Torrent {
 	trackers := dictElement.Value("announce-list")
 	trackersList, _ := trackers.(bencode.ListElement)
 
-	announceList := make([]string, 0)
+	announceList := make([]string, 1+len(trackersList))
+	announceList = append(announceList, torrent.Announce)
 	for _, elem := range trackersList {
 		elemList, _ := elem.(bencode.ListElement)
 		announceList = append(announceList, elemList[0].String())
