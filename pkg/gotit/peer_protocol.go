@@ -32,8 +32,10 @@ const (
 	cancel               // 8
 )
 
-const PEER_TIMEOUT = time.Second * 10
-const READ_MAX = 1050
+const (
+	peerTimeout = time.Second * 10
+	readMax     = 1050
+)
 
 type Peer struct {
 	Id           int
@@ -162,7 +164,6 @@ func NewPeer(ip string, torrent *Torrent, mng *torrentManager, ch chan<- *PeerMe
 // Intended to be run in separate goroutin. Communicates with remote peer
 // and downloads torrent
 func (peer *Peer) GoMessaging() {
-
 	sentPieceMsg := false
 	for {
 		peer.checkKeepAlive()
@@ -267,7 +268,7 @@ func (peer *Peer) sendHave(payload []byte) {
 // PEER IO METHODES //
 //////////////////////
 func (peer *Peer) sendMessage(message []byte) (int, error) {
-	peer.Conn.SetWriteDeadline(time.Now().Add(PEER_TIMEOUT))
+	peer.Conn.SetWriteDeadline(time.Now().Add(peerTimeout))
 	n, err := peer.Conn.Write(message)
 	peer.logger.WithFields(log.Fields{
 		"written": n,
@@ -337,7 +338,7 @@ func checkErr(err error, peer *Peer) {
 
 func readPeerConn(peer *Peer) ([]byte, error) {
 	sizeDat := make([]byte, 4)
-	peer.Conn.SetReadDeadline(time.Now().Add(PEER_TIMEOUT))
+	peer.Conn.SetReadDeadline(time.Now().Add(peerTimeout))
 	n, err := peer.Conn.Read(sizeDat)
 	peer.logger.WithField("read", n).Debug("readPeerConn - reading message size from conn")
 
@@ -358,7 +359,7 @@ func readPeerConn(peer *Peer) ([]byte, error) {
 	payload := make([]byte, messageSize)
 	response := make([]byte, 0, messageSize+4)
 
-	peer.Conn.SetReadDeadline(time.Now().Add(PEER_TIMEOUT))
+	peer.Conn.SetReadDeadline(time.Now().Add(peerTimeout))
 	n, err = io.ReadFull(peer.Conn, payload)
 	peer.logger.WithField("read", n).Debug("readPeerConn - reading message payload from conn")
 
