@@ -2,8 +2,10 @@ package gotit
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"net"
+	"sync"
 	"time"
 
 	"syscall"
@@ -46,7 +48,6 @@ type Peer struct {
 	Bitset       *bitset.BitSet
 	PeerStatus   *PeerStatus
 	ClientStatus *PeerStatus
-	PieceCh      chan<- *PeerMessage
 	start        time.Time
 	logger       *log.Entry
 }
@@ -152,20 +153,29 @@ func newPeerStatus() *PeerStatus {
 	return &PeerStatus{true, false, true}
 }
 
-func NewPeer(ip string, torrent *Torrent, mng *torrentManager, ch chan<- *PeerMessage) *Peer {
+func NewPeer(ip string, torrent *Torrent, mng *torrentManager) *Peer {
 	logger := log.WithFields(log.Fields{
 		"url": ip,
 	})
 
 	return &Peer{rand.Int(), ip, nil, mng, torrent, bitset.NewBitSet(torrent.PiecesNum),
-		newPeerStatus(), newPeerStatus(), ch, time.Now(), logger}
+		newPeerStatus(), newPeerStatus(), time.Now(), logger}
 }
 
 // Intended to be run in separate goroutin. Communicates with remote peer
 // and downloads torrent
-func (peer *Peer) GoMessaging() {
+func (peer *Peer) GoMessaging(ctx context.Context, wg *sync.WaitGroup) {
 	sentPieceMsg := false
+	defer wg.Done()
+
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			// continue the loop
+		}
+
 		peer.checkKeepAlive()
 
 		if peer.PeerStatus.Choking {
@@ -252,10 +262,59 @@ func (peer *Peer) handlePeerMesssage(message *PeerMessage) {
 		peer.logger.Debug("Peer sent request message")
 	case piece:
 		peer.logger.Debug("Peer sent piece message")
-		peer.PieceCh <- message
-		//peer.sendHave(message.payload)
+		writePiece(message, peer.mng.torrent)
 	case cancel:
 		peer.logger.Info("Peer received cancle message")
+	}
+}
+
+func writePiece(msg *PeerMessage, torrent *Torrent) {
+	indx := binary.BigEndian.Uint32(msg.Payload[:4])
+	offset := binary.BigEndian.Uint32(msg.Payload[4:8])
+	log.WithFields(log.Fields{
+		"index":  indx,
+		"offset": offset,
+	}).Debug("Received piece message for writing to file")
+	piecePoss := (int(indx)*torrent.PieceLength + int(offset))
+
+	if torrent.IsDirectory {
+		torFiles := torrent.TorrentFiles
+		for indx, torFile := range torFiles {
+			if torFile.Length < piecePoss {
+				piecePoss = piecePoss - torFile.Length
+				continue
+			} else {
+				log.WithFields(log.Fields{
+					"file":      torFile.Path,
+					"possition": piecePoss,
+				}).Debug("Writting to file ")
+
+				log.Debug("Piece msg for writing")
+				pieceLen := len(msg.Payload[8:])
+				unoccupiedLength := torFile.Length - piecePoss
+				file := torrent.OsFiles[indx]
+				if unoccupiedLength > pieceLen {
+					file.WriteAt(msg.Payload[8:], int64(piecePoss))
+				} else {
+					file.WriteAt(msg.Payload[8:8+unoccupiedLength], int64(piecePoss))
+					piecePoss += unoccupiedLength
+					file = torrent.OsFiles[indx+1]
+
+					log.WithFields(log.Fields{
+						"file":      file.Name(),
+						"possition": piecePoss,
+					}).Debug("Writting to file ")
+					file.WriteAt(msg.Payload[8+unoccupiedLength:], 0)
+				}
+				file.Sync()
+				break
+			}
+		}
+	} else {
+		files := torrent.OsFiles
+		file := files[0]
+		file.WriteAt(msg.Payload[8:], int64(piecePoss))
+		file.Sync()
 	}
 }
 
@@ -304,7 +363,6 @@ func readResponse(response []byte) []PeerMessage {
 }
 
 func checkErr(err error, peer *Peer) {
-
 	if err == nil {
 		return
 	} else if netError, ok := err.(net.Error); ok && netError.Timeout() {
