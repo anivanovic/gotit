@@ -435,7 +435,7 @@ func readPeerConn(peer *Peer) ([]byte, error) {
 func (peer *Peer) connect() error {
 	peer.logger.Info("Connecting to peer")
 	peer.start = time.Now()
-	conn, err := net.DialTimeout("tcp", peer.Url, time.Second*5)
+	conn, err := net.DialTimeout("tcp", peer.Url, time.Second*10)
 	if err != nil {
 		return err
 	}
