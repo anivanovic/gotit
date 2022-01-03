@@ -26,7 +26,7 @@ var (
 )
 
 // set up logger
-func init() {
+func initLogger() {
 	level, err := log.ParseLevel(*logLevel)
 	if err != nil {
 		level = log.FatalLevel
@@ -54,6 +54,7 @@ func main() {
 	if *downloadFolder == "" {
 		*downloadFolder = defaultDownloadFolder()
 	}
+	initLogger()
 
 	torrentContent, _ := ioutil.ReadFile(*torrentPath)
 	torrentString := string(torrentContent)
