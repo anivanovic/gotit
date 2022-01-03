@@ -2,7 +2,7 @@ package gotit
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"time"
@@ -25,17 +25,17 @@ type Tracker interface {
 func CreateTracker(urlString string) (Tracker, error) {
 	url, err := url.Parse(urlString)
 	if err != nil {
-		CheckError(err)
+		log.WithError(err).Error("error parsing url")
 		return nil, err
 	}
 
 	switch url.Scheme {
 	case "udp":
 		return udpTracker(url)
-	case "http":
+	case "http", "https":
 		return httpTracker(url), nil
 	default:
-		return nil, errors.New("unsupported protocol")
+		return nil, fmt.Errorf("tracker: unsupported protocol %s", url.Scheme)
 	}
 }
 

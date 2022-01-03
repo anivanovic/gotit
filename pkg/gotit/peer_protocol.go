@@ -143,10 +143,10 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 	}).Debug("Peer handshake message")
 
 	return ressCode != 19 ||
-		protocolSignature != string(BITTORENT_PROT[:len(BITTORENT_PROT)]) ||
+		protocolSignature != string(BITTORENT_PROT[:]) ||
 		reservedBytes != 0 ||
-		bytes.Compare(sentHash, hash) != 0 ||
-		bytes.Compare(sentPeerId, peerId) != 0
+		!bytes.Equal(sentHash, hash) ||
+		!bytes.Equal(sentPeerId, peerId)
 }
 
 func newPeerStatus() *PeerStatus {
@@ -434,12 +434,12 @@ func readPeerConn(peer *Peer) ([]byte, error) {
 
 func (peer *Peer) connect() error {
 	peer.logger.Info("Connecting to peer")
-	if peer.Conn == nil {
-		peer.start = time.Now()
-		conn, err := net.DialTimeout("tcp", peer.Url, time.Second*5)
-		peer.Conn = conn
+	peer.start = time.Now()
+	conn, err := net.DialTimeout("tcp", peer.Url, time.Second*5)
+	if err != nil {
 		return err
 	}
+	peer.Conn = conn
 
 	return nil
 }

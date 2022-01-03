@@ -85,9 +85,9 @@ func (mng *torrentManager) startDownload() error {
 		go func(ip string) {
 			peer := NewPeer(ip, mng.torrent, mng)
 			err := peer.Announce()
-			CheckError(err)
 			if err != nil {
 				CheckError(err)
+				mng.wg.Done()
 				return
 			}
 			peer.GoMessaging(ctx, mng.wg)
