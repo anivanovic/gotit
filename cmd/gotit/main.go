@@ -14,6 +14,7 @@ import (
 
 	"github.com/anivanovic/gotit/pkg/bencode"
 	"github.com/anivanovic/gotit/pkg/gotit"
+	runtime "github.com/banzaicloud/logrus-runtime-formatter"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -33,6 +34,13 @@ func initLogger() {
 	}
 	log.SetOutput(os.Stdout)
 	log.SetLevel(level)
+
+	formatter := runtime.Formatter{
+		ChildFormatter: &log.TextFormatter{
+			FullTimestamp: true,
+		},
+	}
+	log.SetFormatter(&formatter)
 }
 
 func defaultDownloadFolder() string {
