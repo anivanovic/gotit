@@ -45,26 +45,6 @@ type Torrent struct {
 	Bitset *bitset.BitSet
 }
 
-type StringSet map[string]struct{}
-
-func NewStringSet() StringSet {
-	return make(map[string]struct{})
-}
-
-func (s StringSet) Add(obj string) bool {
-	if _, ok := s[obj]; !ok {
-		s[obj] = struct{}{}
-		return true
-	}
-
-	return false
-}
-
-func (s StringSet) Contains(obj string) bool {
-	_, ok := s[obj]
-	return ok
-}
-
 type TorrentFile struct {
 	Path   string
 	Length int

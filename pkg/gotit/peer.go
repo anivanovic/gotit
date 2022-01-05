@@ -181,7 +181,7 @@ func (peer *Peer) GoMessaging(ctx context.Context, wg *sync.WaitGroup) {
 		if peer.PeerStatus.Choking {
 			peer.ClientStatus.Interested = true
 			interestedM := createInterestedMessage()
-			peer.logger.Info("Sending interested message")
+			peer.logger.Debug("Sending interested message")
 
 			_, err := peer.sendMessage(interestedM)
 			if err != nil {
@@ -221,7 +221,7 @@ func (peer *Peer) GoMessaging(ctx context.Context, wg *sync.WaitGroup) {
 func (peer *Peer) checkKeepAlive() {
 	elapsed := time.Since(peer.start)
 	if elapsed.Minutes() > 1.9 {
-		peer.logger.Info("Sending keep alive message")
+		peer.logger.Debug("Sending keep alive message")
 		peer.start = time.Now()
 		peer.sendMessage(make([]byte, 4)) // send 0
 	}

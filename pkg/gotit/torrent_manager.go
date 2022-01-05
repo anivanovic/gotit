@@ -41,7 +41,7 @@ type torrentManager struct {
 	torrentStatus  torrentStatus
 	peerPool       map[int]*Peer
 	failedMessages [][]byte
-	ips            map[string]struct{}
+	ips            StringSet
 	peerNum        int
 	cancleCtx      context.CancelFunc
 	wg             *sync.WaitGroup
@@ -53,7 +53,7 @@ func NewMng(torrent *Torrent, peerNum int) *torrentManager {
 		torrent:        torrent,
 		peerPool:       make(map[int]*Peer),
 		failedMessages: make([][]byte, 0),
-		ips:            make(map[string]struct{}),
+		ips:            NewStringSet(),
 		peerNum:        peerNum,
 		Mutex:          sync.Mutex{},
 		torrentStatus:  torrentStatus{0, 0, uint64(torrent.left)}}
@@ -68,17 +68,17 @@ func (mng *torrentManager) getIps() error {
 		go func(url string) {
 			defer wg.Done()
 
-			tracker_ips, err := announceToTracker(url, mng.torrent)
+			log.Infof("Sending announce to tracker %s", url)
+			ips, err := announceToTracker(url, mng.torrent)
 			if err != nil {
 				log.WithError(err).Errorf("tracker announce failed for: %s", url)
 				return
 			}
+			log.WithField("url", url).Infof("tracker sent %d peers", len(ips))
 
 			mng.Lock()
 			defer mng.Unlock()
-			for k := range tracker_ips {
-				mng.ips[k] = struct{}{}
-			}
+			mng.ips.AddAll(ips)
 		}(url)
 	}
 	wg.Wait()

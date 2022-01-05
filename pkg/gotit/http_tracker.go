@@ -65,7 +65,6 @@ func (t http_tracker) Announce(ctx context.Context, torrent *Torrent) (map[strin
 		return nil, errors.New("http tracker returned response code " + strconv.Itoa(res.StatusCode))
 	}
 
-	logger.Debug("Http tracker announce response")
 	benc, err := bencode.Parse(body)
 	if err != nil {
 		return nil, err
@@ -104,10 +103,10 @@ func parseListPeers(peers bencode.ListElement) map[string]struct{} {
 		}
 
 		ip := data.Value("ip").String()
-		peerId := data.Value("peer id")
+		// TODO: do we need peerId
+		// peerId := data.Value("peer id")
 		port := data.Value("port").String()
 		ipAddr := ip + ":" + port
-		log.Debugf("ip: %s, port: %s, peerId: %s", ip, port, peerId)
 		ips[ipAddr] = struct{}{}
 	}
 	return ips

@@ -70,7 +70,6 @@ func main() {
 	if err != nil {
 		log.Fatal("Error parsing torrent file: ", err)
 	}
-	log.Info("Parsed torrent file")
 
 	// TODO: handle this better
 	benDict := benc[0]
@@ -81,6 +80,7 @@ func main() {
 	}
 
 	// TODO: do we need to create torrent here just to pass it
+	log.Info("Parsed torrent file")
 	torrent := gotit.NewTorrent(dict)
 	mng := gotit.NewMng(torrent, *peerNum)
 
