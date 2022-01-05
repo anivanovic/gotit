@@ -51,9 +51,7 @@ func (bencode ListElement) Encode() string {
 	for _, element := range bencode {
 		encoded += element.Encode()
 	}
-	encoded += "e"
-
-	return encoded
+	return encoded + "e"
 }
 
 type DictElement map[StringElement]Bencode
