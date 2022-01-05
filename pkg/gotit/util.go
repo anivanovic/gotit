@@ -42,17 +42,11 @@ func readConn(ctx context.Context, conn net.Conn) []byte {
 		conn.SetDeadline(time.Now().Add(time.Second))
 		n, err := conn.Read(tmp)
 		if err != nil {
-			CheckError(err)
+			log.WithError(err).Warnf("error reading connection %s", conn.RemoteAddr().String())
 			break
 		}
 		response = append(response, tmp[:n]...)
 	}
 
 	return response
-}
-
-func CheckError(err error) {
-	if err != nil {
-		log.Warnf("%T %+v", err, err)
-	}
 }

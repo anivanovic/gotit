@@ -106,8 +106,10 @@ func main() {
 func createTorrentFiles(torrent *gotit.Torrent) error {
 	torrentDirPath := *downloadFolder + torrent.Name
 	if torrent.IsDirectory {
-		err := os.Mkdir(torrentDirPath, os.ModeDir)
-		gotit.CheckError(err)
+		if err := os.Mkdir(torrentDirPath, os.ModeDir); err != nil {
+			return err
+		}
+
 		for _, torrentFile := range torrent.TorrentFiles {
 			file, err := os.Create(torrentDirPath + "/" + torrentFile.Path)
 			if err != nil {

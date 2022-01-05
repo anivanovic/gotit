@@ -112,7 +112,7 @@ func (mng *torrentManager) startDownload() error {
 			peer := NewPeer(ip, mng.torrent, mng)
 			err := peer.Announce()
 			if err != nil {
-				CheckError(err)
+				log.WithError(err).Warnf("error announcing to peer %s", ip)
 				mng.wg.Done()
 				return
 			}

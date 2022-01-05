@@ -44,13 +44,11 @@ type udp_tracker struct {
 func udpTracker(url *url.URL) (Tracker, error) {
 	raddr, err := net.ResolveUDPAddr(url.Scheme, url.Host)
 	if err != nil {
-		CheckError(err)
 		return nil, err
 	}
 
 	conn, err := net.DialUDP(url.Scheme, nil, raddr)
 	if err != nil {
-		CheckError(err)
 		return nil, err
 	}
 
