@@ -3,12 +3,42 @@ package gotit
 import (
 	"context"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
 
+type torrentStatus struct {
+	download uint64
+	upload   uint64
+	left     uint64
+}
+
+func (ts *torrentStatus) AddDownload(size uint64) {
+	atomic.AddUint64(&ts.download, size)
+	atomic.AddUint64(&ts.left, ^(size - 1))
+}
+
+func (ts *torrentStatus) AddUpload(size uint64) {
+	atomic.AddUint64(&ts.upload, size)
+}
+
+func (ts *torrentStatus) Download() uint64 {
+	return atomic.LoadUint64(&ts.download)
+}
+
+func (ts *torrentStatus) Upload() uint64 {
+	return atomic.LoadUint64(&ts.upload)
+}
+
+func (ts *torrentStatus) Left() uint64 {
+	return atomic.LoadUint64(&ts.left)
+}
+
 type torrentManager struct {
 	torrent        *Torrent
+	torrentStatus  torrentStatus
 	peerPool       map[int]*Peer
 	failedMessages [][]byte
 	ips            map[string]struct{}
@@ -25,7 +55,8 @@ func NewMng(torrent *Torrent, peerNum int) *torrentManager {
 		failedMessages: make([][]byte, 0),
 		ips:            make(map[string]struct{}),
 		peerNum:        peerNum,
-		Mutex:          sync.Mutex{}}
+		Mutex:          sync.Mutex{},
+		torrentStatus:  torrentStatus{0, 0, uint64(torrent.left)}}
 }
 
 // announce to all trackers from torrent file and gather
@@ -95,6 +126,13 @@ func (mng *torrentManager) startDownload() error {
 		indx++
 	}
 
+	go func() {
+		for {
+			time.Sleep(time.Second * 10)
+			log.Infof("Download status - Downloaded: %d, Left: %d", mng.torrentStatus.Download(), mng.torrentStatus.Left())
+		}
+	}()
+
 	mng.wait()
 	return nil // TODO: propagate errors
 }
@@ -125,8 +163,15 @@ func (mng *torrentManager) AddPeer(peer *Peer) bool {
 	return true
 }
 
+func (mng *torrentManager) UpdateStatus(downloaded, uploaded uint64) {
+	mng.torrentStatus.AddDownload(downloaded)
+	mng.torrentStatus.AddUpload(uploaded)
+}
+
 func (mng *torrentManager) RequestFailed(req []byte) {
+	mng.Lock()
 	mng.failedMessages = append(mng.failedMessages, req)
+	mng.Unlock()
 	log.Warn("Piece request faild")
 	log.WithField("size", len(mng.failedMessages)).Debug("Peer request failed messages")
 }

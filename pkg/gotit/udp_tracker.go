@@ -7,13 +7,13 @@ import (
 	"math/rand"
 	"net"
 	"net/url"
-	"strconv"
 	"time"
 
 	"bytes"
 
 	"errors"
 
+	"github.com/anivanovic/gotit/pkg/bencode"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -78,7 +78,7 @@ func (t *udp_tracker) Announce(ctx context.Context, torrent *Torrent) (map[strin
 	request := createAnnounce(connId, transactionId, torrent)
 	t.Conn.Write(request)
 	log.WithField("ip", t.Conn.RemoteAddr()).Info("Announce sent to tracker")
-	response := readConn(t.Conn)
+	response := readConn(context.TODO(), t.Conn)
 
 	err = t.readTrackerResponse(response, transactionId)
 	return t.Ips, err
@@ -119,18 +119,18 @@ func (t *udp_tracker) readTrackerResponse(response []byte, transactionId uint32)
 	switch actionCode {
 	case connect:
 		t.connectionId, err = readConnect(response, transactionId)
+		return err
 	case announce:
 		t.Ips, err = readAnnounce(response, transactionId)
+		return err
 	case scrape:
-		err = readScrape(response, transactionId)
+		return readScrape(response, transactionId)
 	case con_error:
 		// reads error message and always returns error
 		return readError(response, transactionId)
 	default:
-		err = fmt.Errorf("unrecognized udp tracker response action code: %d", actionCode)
+		return fmt.Errorf("unrecognized udp tracker response action code: %d", actionCode)
 	}
-
-	return err
 }
 
 func createAnnounce(connId uint64, transactionId uint32, torrent *Torrent) []byte {
@@ -180,26 +180,14 @@ func readAnnounce(response []byte, transactionId uint32) (map[string]struct{}, e
 	interval := binary.BigEndian.Uint32(response[8:12])
 	leachers := binary.BigEndian.Uint32(response[12:16])
 	seaders := binary.BigEndian.Uint32(response[16:20])
-	peerAddresses := response[20:]
-	peerCount := len(peerAddresses) / 6
 
 	log.WithFields(log.Fields{
-		"resCode":    announce,
-		"interval":   interval,
-		"leachers":   leachers,
-		"seaders":    seaders,
-		"peer count": peerCount,
+		"resCode":  announce,
+		"interval": interval,
+		"leachers": leachers,
+		"seaders":  seaders,
 	}).Info("CreateTracker message")
-
-	ips := make(map[string]struct{})
-	for i := 0; i < peerCount; i++ {
-		byteMask := 6
-		ipAddress := net.IPv4(peerAddresses[byteMask*i], peerAddresses[byteMask*i+1], peerAddresses[byteMask*i+2], peerAddresses[byteMask*i+3])
-		port := binary.BigEndian.Uint16(peerAddresses[byteMask*i+4 : byteMask*i+6])
-		ipAddr := ipAddress.String() + ":" + strconv.Itoa(int(port))
-		ips[ipAddr] = struct{}{}
-	}
-	return ips, nil
+	return parseStringPeers(bencode.StringElement(response[20:])), nil
 }
 
 func readScrape(response []byte, transactionId uint32) error {

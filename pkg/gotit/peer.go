@@ -262,6 +262,7 @@ func (peer *Peer) handlePeerMesssage(message *PeerMessage) {
 		peer.logger.Debug("Peer sent request message")
 	case piece:
 		peer.logger.Debug("Peer sent piece message")
+		peer.mng.UpdateStatus(uint64(peer.mng.torrent.PieceLength), 0)
 		writePiece(message, peer.mng.torrent)
 	case cancel:
 		peer.logger.Info("Peer received cancle message")
@@ -456,7 +457,7 @@ func (peer *Peer) Announce() error {
 	peer.Conn.Write(handshake)
 
 	peer.Conn.SetDeadline(time.Now().Add(time.Second * 5))
-	response := readConn(peer.Conn)
+	response := readConn(context.TODO(), peer.Conn)
 
 	read := len(response)
 	peer.logger.WithField("length", read).Info("Read handshake message")
