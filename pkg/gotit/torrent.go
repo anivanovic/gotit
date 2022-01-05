@@ -21,22 +21,21 @@ var CLIENT_ID = [8]byte{'-', 'G', 'O', '0', '1', '0', '0', '-'}
 const blockLength uint32 = 16 * 1024
 
 type Torrent struct {
-	Announce      string
-	Announce_list []string
-	Hash          []byte
-	Length        int
-	PieceLength   int
-	Pieces        []byte
-	PiecesNum     int
-	TorrentFiles  []TorrentFile
-	OsFiles       []*os.File
-	Name          string
-	CreationDate  int64
-	CreatedBy     string
-	Info          string
-	Comment       string
-	IsDirectory   bool
-	PeerId        []byte
+	Trackers     StringSet
+	Hash         []byte
+	Length       int
+	PieceLength  int
+	Pieces       []byte
+	PiecesNum    int
+	TorrentFiles []TorrentFile
+	OsFiles      []*os.File
+	Name         string
+	CreationDate int64
+	CreatedBy    string
+	Info         string
+	Comment      string
+	IsDirectory  bool
+	PeerId       []byte
 
 	downloaded, uploaded, left int
 
@@ -44,6 +43,26 @@ type Torrent struct {
 	numOfBlocks int
 
 	Bitset *bitset.BitSet
+}
+
+type StringSet map[string]struct{}
+
+func NewStringSet() StringSet {
+	return make(map[string]struct{})
+}
+
+func (s StringSet) Add(obj string) bool {
+	if _, ok := s[obj]; !ok {
+		s[obj] = struct{}{}
+		return true
+	}
+
+	return false
+}
+
+func (s StringSet) Contains(obj string) bool {
+	_, ok := s[obj]
+	return ok
 }
 
 type TorrentFile struct {
@@ -55,7 +74,6 @@ func NewTorrent(dictElement bencode.DictElement) *Torrent {
 	//TODO make bencode api simpler
 	torrent := new(Torrent)
 	torrent.PeerId = createClientId()
-	torrent.Announce = dictElement.Value("announce").String()
 	if dictElement.Value("created by") != nil {
 		torrent.CreatedBy = dictElement.Value("created by").String()
 	}
@@ -73,14 +91,14 @@ func NewTorrent(dictElement bencode.DictElement) *Torrent {
 
 	trackers := dictElement.Value("announce-list")
 	trackersList, _ := trackers.(bencode.ListElement)
-
-	announceList := make([]string, 1+len(trackersList))
-	announceList = append(announceList, torrent.Announce)
+	announce := dictElement.Value("announce").String()
+	announceSet := NewStringSet()
+	announceSet.Add(announce)
 	for _, elem := range trackersList {
 		elemList, _ := elem.(bencode.ListElement)
-		announceList = append(announceList, elemList[0].String())
+		announceSet.Add(elemList[0].String())
 	}
-	torrent.Announce_list = announceList
+	torrent.Trackers = announceSet
 
 	if dictElement.Value("info.length") != nil {
 		torrent.IsDirectory = false

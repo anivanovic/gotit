@@ -63,14 +63,14 @@ func NewMng(torrent *Torrent, peerNum int) *torrentManager {
 // peers ip addresses
 func (mng *torrentManager) getIps() error {
 	wg := sync.WaitGroup{}
-	for _, trackerUrl := range mng.torrent.Announce_list {
+	for url := range mng.torrent.Trackers {
 		wg.Add(1)
 		go func(url string) {
 			defer wg.Done()
 
 			tracker_ips, err := announceToTracker(url, mng.torrent)
 			if err != nil {
-				CheckError(err)
+				log.WithError(err).Errorf("tracker announce failed for: %s", url)
 				return
 			}
 
@@ -79,7 +79,7 @@ func (mng *torrentManager) getIps() error {
 			for k := range tracker_ips {
 				mng.ips[k] = struct{}{}
 			}
-		}(trackerUrl)
+		}(url)
 	}
 	wg.Wait()
 
@@ -93,12 +93,7 @@ func announceToTracker(url string, torrent *Torrent) (map[string]struct{}, error
 	}
 
 	defer tracker.Close()
-	ips, err := tracker.Announce(context.Background(), torrent)
-	if err != nil {
-		return nil, err
-	}
-
-	return ips, nil
+	return tracker.Announce(context.Background(), torrent)
 }
 
 func (mng *torrentManager) startDownload() error {
