@@ -2,6 +2,7 @@ package gotit
 
 import (
 	"context"
+	"io/ioutil"
 	"net"
 	"time"
 
@@ -23,7 +24,7 @@ func (s StringSet) Add(obj string) bool {
 	return false
 }
 
-func (s StringSet) AddAll(other map[string]struct{}) {
+func (s StringSet) AddAll(other StringSet) {
 	for k := range other {
 		s.Add(k)
 	}
@@ -34,19 +35,13 @@ func (s StringSet) Contains(obj string) bool {
 	return ok
 }
 
-func readConn(ctx context.Context, conn net.Conn) []byte {
-	response := make([]byte, 0, 4096)
-	tmp := make([]byte, 4096)
-
-	for {
-		conn.SetDeadline(time.Now().Add(time.Second))
-		n, err := conn.Read(tmp)
-		if err != nil {
-			log.WithError(err).Warnf("error reading connection %s", conn.RemoteAddr().String())
-			break
-		}
-		response = append(response, tmp[:n]...)
+func readConn(ctx context.Context, conn net.Conn) ([]byte, error) {
+	conn.SetDeadline(time.Now().Add(time.Second * 2))
+	data, err := ioutil.ReadAll(conn)
+	if err != nil {
+		log.WithError(err).Warn("error reading connection")
+		return data, err
 	}
 
-	return response
+	return data, nil
 }

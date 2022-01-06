@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -140,7 +141,7 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 		"protocol signature": protocolSignature,
 		"hash":               sentHash,
 		"peerId":             sentPeerId,
-	}).Debug("Peer handshake message")
+	}).Info("Peer handshake message")
 
 	return ressCode != 19 ||
 		protocolSignature != string(BITTORENT_PROT[:]) ||
@@ -347,7 +348,7 @@ func readResponse(response []byte) []PeerMessage {
 		currPossition += 4
 
 		if size == 0 { // keepalive message
-			log.Info("Received keepalice message")
+			log.Info("Received keepalive message")
 			messages = append(messages, *NewPeerMessage(nil))
 		} else {
 			message := NewPeerMessage(response[currPossition : currPossition+size])
@@ -434,14 +435,13 @@ func readPeerConn(peer *Peer) ([]byte, error) {
 }
 
 func (peer *Peer) connect() error {
-	peer.logger.Info("Connecting to peer")
 	peer.start = time.Now()
 	conn, err := net.DialTimeout("tcp", peer.Url, time.Second*10)
 	if err != nil {
-		return err
+		return fmt.Errorf("peer connect failed: %w", err)
 	}
-	peer.Conn = conn
 
+	peer.Conn = conn
 	return nil
 }
 
@@ -450,28 +450,28 @@ func (peer *Peer) Announce() error {
 	if err != nil {
 		return err
 	}
-	peer.logger.Info("Sending announce message")
 
 	handshake := peer.Torrent.CreateHandshake()
 	peer.Conn.SetDeadline(time.Now().Add(time.Second * 5))
 	peer.Conn.Write(handshake)
 
 	peer.Conn.SetDeadline(time.Now().Add(time.Second * 5))
-	response := readConn(context.TODO(), peer.Conn)
+	response, err := readConn(context.TODO(), peer.Conn)
+	if err != nil {
+		return err
+	}
 
 	read := len(response)
-	peer.logger.WithField("length", read).Info("Read handshake message")
+	peer.logger.WithField("length", read).Debug("Read handshake message")
 	valid := checkHandshake(response, peer.Torrent.Hash, peer.Torrent.PeerId)
 
-	if valid {
-		messages := readResponse(response[68:])
-		for _, message := range messages {
-			peer.handlePeerMesssage(&message)
-		}
-
-		return nil
-	} else {
-		peer.logger.Warn("Peer handshake invalid")
-		return errors.New("Peer handshake invalid")
+	if !valid {
+		return errors.New("peer handshake invalid")
 	}
+
+	messages := readResponse(response[68:])
+	for _, message := range messages {
+		peer.handlePeerMesssage(&message)
+	}
+	return nil
 }

@@ -76,7 +76,10 @@ func (t *udp_tracker) Announce(ctx context.Context, torrent *Torrent) (map[strin
 	request := createAnnounce(connId, transactionId, torrent)
 	t.Conn.Write(request)
 	log.WithField("ip", t.Conn.RemoteAddr()).Info("Announce sent to tracker")
-	response := readConn(context.TODO(), t.Conn)
+	response, err := readConn(context.TODO(), t.Conn)
+	if err != nil {
+		return nil, err
+	}
 
 	err = t.readTrackerResponse(response, transactionId)
 	return t.Ips, err
