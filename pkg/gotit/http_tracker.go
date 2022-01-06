@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"time"
 
 	"strconv"
 
@@ -18,7 +19,9 @@ import (
 )
 
 type http_tracker struct {
-	Url *url.URL
+	Url          *url.URL
+	Interval     time.Duration
+	lastAnnounce time.Time
 }
 
 func httpTracker(url *url.URL) Tracker {
@@ -28,7 +31,7 @@ func httpTracker(url *url.URL) Tracker {
 	return t
 }
 
-func (t http_tracker) Announce(ctx context.Context, torrent *Torrent) (map[string]struct{}, error) {
+func (t *http_tracker) Announce(ctx context.Context, torrent *Torrent) (map[string]struct{}, error) {
 	query := t.Url.Query()
 	query.Set("info_hash", string(torrent.Hash))
 	query.Set("peer_id", string(torrent.PeerId))
@@ -44,6 +47,7 @@ func (t http_tracker) Announce(ctx context.Context, torrent *Torrent) (map[strin
 		return nil, err
 	}
 
+	t.lastAnnounce = time.Now()
 	res, err := http.DefaultClient.Do(r)
 	if err != nil {
 		return nil, err
@@ -69,6 +73,11 @@ func (t http_tracker) Announce(ctx context.Context, torrent *Torrent) (map[strin
 	if err != nil {
 		return nil, err
 	}
+	dict := benc[0].(bencode.DictElement)
+	if interval := dict.Value("interval"); interval != nil {
+		t.Interval = time.Second * time.Duration(interval.(bencode.IntElement))
+	}
+
 	return readPeers(benc[0])
 }
 
