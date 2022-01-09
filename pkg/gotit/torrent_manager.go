@@ -107,7 +107,7 @@ func announceToTracker(ctx context.Context, url string, torrent *Torrent) (map[s
 			log.WithError(err).WithField("url", url).Warnf("failed tracker announce. attempt %d", n+1)
 		}),
 		retry.Attempts(5),
-		retry.Delay(500),
+		retry.Delay(time.Second*1),
 		retry.DelayType(retry.BackOffDelay),
 		retry.Context(ctx),
 	)
