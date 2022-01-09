@@ -9,13 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"syscall"
-
-	"io"
-
 	"errors"
-
-	"strconv"
 
 	"math/rand"
 
@@ -36,7 +30,7 @@ const (
 )
 
 const (
-	peerTimeout = time.Second * 10
+	peerTimeout = time.Second * 5
 	readMax     = 1050
 )
 
@@ -128,6 +122,7 @@ func createCancleMessage(pieceIdx int) []byte {
 
 func checkHandshake(handshake, hash, peerId []byte) bool {
 	if len(handshake) < 68 {
+		log.Infof("len invalid %d", len(handshake))
 		return false
 	}
 
@@ -141,7 +136,7 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 		"protocol signature": protocolSignature,
 		"hash":               sentHash,
 		"peerId":             sentPeerId,
-	}).Info("Peer handshake message")
+	}).Debug("Peer handshake message")
 
 	return ressCode != 19 ||
 		protocolSignature != string(BITTORENT_PROT[:]) ||
@@ -200,8 +195,7 @@ func (peer *Peer) GoMessaging(ctx context.Context, wg *sync.WaitGroup) {
 			}
 		}
 
-		// read message from peer
-		response, err := readPeerConn(peer)
+		response, err := readMessage(context.Background(), peer.Conn)
 		if err != nil {
 			if sentPieceMsg {
 				peer.mng.RequestFailed(requestMsg)
@@ -209,13 +203,7 @@ func (peer *Peer) GoMessaging(ctx context.Context, wg *sync.WaitGroup) {
 			return
 		}
 
-		peerMessages := readResponse(response)
-		for _, message := range peerMessages {
-			if sentPieceMsg {
-				sentPieceMsg = false
-			}
-			peer.handlePeerMesssage(&message)
-		}
+		peer.handlePeerMesssage(NewPeerMessage(response))
 	}
 }
 
@@ -266,7 +254,9 @@ func (peer *Peer) handlePeerMesssage(message *PeerMessage) {
 		peer.mng.UpdateStatus(uint64(peer.mng.torrent.PieceLength), 0)
 		writePiece(message, peer.mng.torrent)
 	case cancel:
-		peer.logger.Info("Peer received cancle message")
+		peer.logger.Info("Peer sent cancle message")
+	default:
+		peer.logger.Infof("Peer sent wrong code %d", message.code)
 	}
 }
 
@@ -338,105 +328,13 @@ func (peer *Peer) sendMessage(message []byte) (int, error) {
 	return n, err
 }
 
-func readResponse(response []byte) []PeerMessage {
-	read := len(response)
-	currPossition := 0
-
-	messages := make([]PeerMessage, 0)
-	for currPossition < read {
-		size := int(binary.BigEndian.Uint32(response[currPossition : currPossition+4]))
-		currPossition += 4
-
-		if size == 0 { // keepalive message
-			log.Info("Received keepalive message")
-			messages = append(messages, *NewPeerMessage(nil))
-		} else {
-			message := NewPeerMessage(response[currPossition : currPossition+size])
-			log.WithFields(log.Fields{
-				"code": message.code,
-				"size": size,
-			}).Debug("Peer message")
-			currPossition = currPossition + size
-			messages = append(messages, *message)
-		}
-	}
-
-	return messages
-}
-
-func checkErr(err error, peer *Peer) {
-	if err == nil {
-		return
-	} else if netError, ok := err.(net.Error); ok && netError.Timeout() {
-		peer.logger.Warn("Peer conn timeout")
-		return
-	} else if io.EOF == err {
-		peer.logger.Warn("Peer conn EOF")
-		peer.PeerStatus.Valid = false
-	}
-
-	switch t := err.(type) {
-	case *net.OpError:
-		if t.Op == "dial" {
-			peer.logger.Warn("Peer conn Unknown host")
-			peer.PeerStatus.Valid = false
-		} else if t.Op == "read" {
-			peer.logger.Warn("Peer conn refused")
-			peer.PeerStatus.Valid = false
-		}
-
-	case syscall.Errno:
-		if t == syscall.ECONNREFUSED {
-			peer.logger.Warn("Peer conn refuse 2")
-			peer.PeerStatus.Valid = false
-		}
-
-	default:
-		peer.logger.WithField("err", err).Warn("Unknown error")
-	}
-}
-
-func readPeerConn(peer *Peer) ([]byte, error) {
-	sizeDat := make([]byte, 4)
-	peer.Conn.SetReadDeadline(time.Now().Add(peerTimeout))
-	n, err := peer.Conn.Read(sizeDat)
-	peer.logger.WithField("read", n).Debug("readPeerConn - reading message size from conn")
-
-	if err != nil {
-		checkErr(err, peer)
-		return nil, err
-	}
-
-	if n != 4 {
-		return nil, errors.New("Torrent message read error. Read data" + strconv.Itoa(n))
-	}
-	messageSize := binary.BigEndian.Uint32(sizeDat)
-	if messageSize == 0 {
-		return make([]byte, 0), nil
-	}
-	peer.logger.WithField("size", messageSize).Debug("Read peer message length")
-
-	payload := make([]byte, messageSize)
-	response := make([]byte, 0, messageSize+4)
-
-	peer.Conn.SetReadDeadline(time.Now().Add(peerTimeout))
-	n, err = io.ReadFull(peer.Conn, payload)
-	peer.logger.WithField("read", n).Debug("readPeerConn - reading message payload from conn")
-
-	if err != nil {
-		checkErr(err, peer)
-		return nil, err
-	}
-
-	response = append(response, sizeDat...)
-	response = append(response, payload...)
-
-	return response, nil
+func (p *Peer) convertToPeerMessage(response []byte) *PeerMessage {
+	return NewPeerMessage(response)
 }
 
 func (peer *Peer) connect() error {
 	peer.start = time.Now()
-	conn, err := net.DialTimeout("tcp", peer.Url, time.Second*10)
+	conn, err := net.DialTimeout("tcp", peer.Url, time.Second*2)
 	if err != nil {
 		return fmt.Errorf("peer connect failed: %w", err)
 	}
@@ -451,27 +349,26 @@ func (peer *Peer) Announce() error {
 		return err
 	}
 
-	handshake := peer.Torrent.CreateHandshake()
-	peer.Conn.SetDeadline(time.Now().Add(time.Second * 5))
-	peer.Conn.Write(handshake)
+	peer.setWriteTimeout(peerTimeout)
+	peer.Conn.Write(peer.Torrent.CreateHandshake())
 
-	peer.Conn.SetDeadline(time.Now().Add(time.Second * 5))
-	response, err := readConn(context.TODO(), peer.Conn)
+	response, err := readHandshake(context.TODO(), peer.Conn)
 	if err != nil {
 		return err
 	}
 
-	read := len(response)
-	peer.logger.WithField("length", read).Debug("Read handshake message")
-	valid := checkHandshake(response, peer.Torrent.Hash, peer.Torrent.PeerId)
-
-	if !valid {
+	if valid := checkHandshake(response, peer.Torrent.Hash, peer.Torrent.PeerId); !valid {
 		return errors.New("peer handshake invalid")
 	}
 
-	messages := readResponse(response[68:])
-	for _, message := range messages {
-		peer.handlePeerMesssage(&message)
-	}
+	peer.logger.Info("announce to peer successfull")
 	return nil
+}
+
+func (p *Peer) setWriteTimeout(dur time.Duration) {
+	p.Conn.SetWriteDeadline(time.Now().Add(dur))
+}
+
+func (p *Peer) setReadTimeout(dur time.Duration) {
+	p.Conn.SetReadDeadline(time.Now().Add(dur))
 }

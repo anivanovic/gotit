@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/avast/retry-go"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -110,12 +111,29 @@ func (mng *torrentManager) startDownload() error {
 		mng.wg.Add(1)
 		go func(ip string) {
 			peer := NewPeer(ip, mng.torrent, mng)
-			err := peer.Announce()
+			err := retry.Do(
+				func() error {
+					return peer.Announce()
+				},
+				retry.LastErrorOnly(true),
+				retry.OnRetry(func(n uint, err error) {
+					log.WithError(err).WithField("ip", ip).Warnf("failed announce. attempt %d", n+1)
+				}),
+				retry.Attempts(5),
+				retry.Delay(500),
+				retry.DelayType(retry.BackOffDelay),
+				retry.Context(ctx),
+			)
 			if err != nil {
 				log.WithError(err).Warnf("error announcing to peer %s", ip)
 				mng.wg.Done()
 				return
 			}
+
+			mng.Lock()
+			mng.AddPeer(peer)
+			mng.Unlock()
+
 			peer.GoMessaging(ctx, mng.wg)
 		}(ip)
 		indx++
@@ -124,7 +142,10 @@ func (mng *torrentManager) startDownload() error {
 	go func() {
 		for {
 			time.Sleep(time.Second * 10)
-			log.Infof("Download status - Downloaded: %d, Left: %d", mng.torrentStatus.Download(), mng.torrentStatus.Left())
+			log.Infof("Download status - Downloaded: %d, Left: %d, Peers: %d",
+				mng.torrentStatus.Download(),
+				mng.torrentStatus.Left(),
+				len(mng.peerPool))
 		}
 	}()
 
