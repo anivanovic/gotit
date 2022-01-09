@@ -59,14 +59,18 @@ type PeerMessage struct {
 	Payload []byte
 }
 
+var keepalivePeerMessage = &PeerMessage{
+	size:    0,
+	code:    99,
+	Payload: nil,
+}
+
 func NewPeerMessage(data []byte) *PeerMessage {
-	var message PeerMessage
 	if len(data) == 0 { // keepalive message
-		message = PeerMessage{size: 0, code: 99, Payload: nil}
-	} else {
-		message = PeerMessage{size: uint32(len(data)), code: data[0], Payload: data[1:]}
+		return keepalivePeerMessage
 	}
-	return &message
+
+	return &PeerMessage{size: uint32(len(data)), code: data[0], Payload: data[1:]}
 }
 
 func createNotInterestedMessage() []byte {
