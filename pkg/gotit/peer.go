@@ -126,7 +126,6 @@ func createCancleMessage(pieceIdx int) []byte {
 
 func checkHandshake(handshake, hash, peerId []byte) bool {
 	if len(handshake) < 68 {
-		log.Infof("len invalid %d", len(handshake))
 		return false
 	}
 
@@ -151,117 +150,6 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 
 func newPeerStatus() *PeerStatus {
 	return &PeerStatus{true, false, true}
-}
-
-func NewPeer(ip string, torrent *Torrent, mng *torrentManager) *Peer {
-	logger := log.WithFields(log.Fields{
-		"url": ip,
-	})
-
-	return &Peer{rand.Int(), ip, nil, mng, torrent, bitset.NewBitSet(torrent.PiecesNum),
-		newPeerStatus(), newPeerStatus(), time.Now(), logger}
-}
-
-// Intended to be run in separate goroutin. Communicates with remote peer
-// and downloads torrent
-func (peer *Peer) GoMessaging(ctx context.Context, wg *sync.WaitGroup) {
-	sentPieceMsg := false
-	defer wg.Done()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			// continue the loop
-		}
-
-		peer.checkKeepAlive()
-
-		if peer.PeerStatus.Choking {
-			peer.ClientStatus.Interested = true
-			interestedM := createInterestedMessage()
-			peer.logger.Debug("Sending interested message")
-
-			_, err := peer.sendMessage(interestedM)
-			if err != nil {
-				return
-			}
-		}
-
-		var requestMsg []byte
-		if !peer.PeerStatus.Choking && !sentPieceMsg {
-			requestMsg = peer.mng.NextRequest()
-			sentPieceMsg = true
-			_, err := peer.sendMessage(requestMsg)
-			if err != nil {
-				return
-			}
-		}
-
-		response, err := readMessage(context.Background(), peer.Conn)
-		if err != nil {
-			if sentPieceMsg {
-				peer.mng.RequestFailed(requestMsg)
-			}
-			return
-		}
-
-		peer.handlePeerMesssage(NewPeerMessage(response))
-	}
-}
-
-func (peer *Peer) checkKeepAlive() {
-	elapsed := time.Since(peer.start)
-	if elapsed.Minutes() > 1.9 {
-		peer.logger.Debug("Sending keep alive message")
-		peer.start = time.Now()
-		peer.sendMessage(make([]byte, 4)) // send 0
-	}
-}
-
-func (peer *Peer) handlePeerMesssage(message *PeerMessage) {
-	// if keepalive wait 2 minutes and try again
-	if message.size == 0 {
-		peer.logger.Debug("Peer sent keepalive")
-		time.Sleep(time.Minute * 2)
-		return
-	}
-
-	switch message.code {
-	case bitfield:
-		peer.logger.Debug("Peer sent bitfield message")
-		peer.Bitset.InternalSet = message.Payload
-	case have:
-		peer.logger.Debug("Peer sent have message")
-		indx := int(binary.BigEndian.Uint32(message.Payload))
-		peer.Bitset.Set(indx)
-	case interested:
-		peer.logger.Debug("Peer sent interested message")
-		peer.PeerStatus.Interested = true
-		// return choke or unchoke
-	case notInterested:
-		peer.logger.Debug("Peer sent notInterested message")
-		peer.PeerStatus.Interested = false
-		// return choke
-	case choke:
-		peer.logger.Debug("Peer sent choke message")
-		peer.PeerStatus.Choking = true
-		time.Sleep(time.Second * 30)
-	case unchoke:
-		peer.logger.Debug("Peer sent unchoke message")
-		peer.PeerStatus.Choking = false
-	case request:
-		peer.logger.Debug("Peer sent request message")
-	case piece:
-		peer.logger.Debug("Peer sent piece message")
-		peer.mng.UpdateStatus(uint64(peer.mng.torrent.PieceLength), 0)
-		writePiece(message, peer.mng.torrent)
-	case cancel:
-		peer.logger.Info("Peer sent cancle message")
-	default:
-		peer.logger.Infof("Peer sent wrong code %d", message.code)
-	}
 }
 
 func writePiece(msg *PeerMessage, torrent *Torrent) {
@@ -314,35 +202,22 @@ func writePiece(msg *PeerMessage, torrent *Torrent) {
 	}
 }
 
-func (peer *Peer) sendHave(payload []byte) {
-	indx := binary.BigEndian.Uint32(payload[:4])
-	peer.sendMessage(createHaveMessage(int(indx)))
-}
+func NewPeer(ip string, torrent *Torrent, mng *torrentManager) *Peer {
+	logger := log.WithFields(log.Fields{
+		"url": ip,
+	})
 
-//////////////////////
-// PEER IO METHODES //
-//////////////////////
-func (peer *Peer) sendMessage(message []byte) (int, error) {
-	peer.Conn.SetWriteDeadline(time.Now().Add(peerTimeout))
-	n, err := peer.Conn.Write(message)
-	peer.logger.WithFields(log.Fields{
-		"written": n,
-		"error":   err,
-	}).Debug("sendMessage to peer")
-	return n, err
-}
-
-func (p *Peer) convertToPeerMessage(response []byte) *PeerMessage {
-	return NewPeerMessage(response)
+	return &Peer{rand.Int(), ip, nil, mng, torrent, bitset.NewBitSet(torrent.PiecesNum),
+		newPeerStatus(), newPeerStatus(), time.Now(), logger}
 }
 
 func (peer *Peer) connect() error {
-	peer.start = time.Now()
 	conn, err := net.DialTimeout("tcp", peer.Url, time.Second*2)
 	if err != nil {
 		return fmt.Errorf("peer connect failed: %w", err)
 	}
 
+	peer.start = time.Now()
 	peer.Conn = conn
 	return nil
 }
@@ -367,6 +242,122 @@ func (peer *Peer) Announce() error {
 
 	peer.logger.Info("announce to peer successfull")
 	return nil
+}
+
+// Intended to be run in separate goroutin. Communicates with remote peer
+// and downloads torrent
+func (peer *Peer) GoMessaging(ctx context.Context, wg *sync.WaitGroup) {
+	sentPieceMsg := false
+	defer wg.Done()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			// continue the loop
+		}
+
+		peer.checkKeepAlive()
+
+		if peer.PeerStatus.Choking {
+			peer.ClientStatus.Interested = true
+			interestedM := createInterestedMessage()
+			peer.logger.Debug("Sending interested message")
+
+			_, err := peer.sendMessage(interestedM)
+			if err != nil {
+				return
+			}
+		}
+
+		var requestMsg []byte
+		if !peer.PeerStatus.Choking && !sentPieceMsg {
+			requestMsg = peer.mng.NextRequest()
+			sentPieceMsg = true
+			_, err := peer.sendMessage(requestMsg)
+			if err != nil {
+				return
+			}
+		}
+
+		response, err := readMessage(context.Background(), peer.Conn)
+		if err != nil {
+			if sentPieceMsg {
+				peer.mng.RequestFailed(requestMsg)
+			}
+			return
+		}
+
+		peer.handlePeerMesssage(NewPeerMessage(response))
+	}
+}
+
+func (peer *Peer) checkKeepAlive() {
+	if time.Since(peer.start).Minutes() > 1.9 {
+		peer.logger.Debug("Sending keep alive message")
+		peer.start = time.Now()
+		peer.sendMessage(make([]byte, 4)) // send 0
+	}
+}
+
+func (peer *Peer) handlePeerMesssage(message *PeerMessage) {
+	// if keepalive wait 2 minutes and try again
+	if message.size == 0 {
+		peer.logger.Debug("Peer sent keepalive")
+		time.Sleep(time.Minute * 2)
+		return
+	}
+
+	switch message.code {
+	case bitfield:
+		peer.logger.Debug("Peer sent bitfield message")
+		peer.Bitset.InternalSet = message.Payload
+	case have:
+		peer.logger.Debug("Peer sent have message")
+		indx := int(binary.BigEndian.Uint32(message.Payload))
+		peer.Bitset.Set(indx)
+	case interested:
+		peer.logger.Debug("Peer sent interested message")
+		peer.PeerStatus.Interested = true
+		// return choke or unchoke
+	case notInterested:
+		peer.logger.Debug("Peer sent notInterested message")
+		peer.PeerStatus.Interested = false
+		// return choke
+	case choke:
+		peer.logger.Debug("Peer sent choke message")
+		peer.PeerStatus.Choking = true
+		time.Sleep(time.Second * 30)
+	case unchoke:
+		peer.logger.Debug("Peer sent unchoke message")
+		peer.PeerStatus.Choking = false
+	case request:
+		peer.logger.Debug("Peer sent request message")
+	case piece:
+		peer.logger.Debug("Peer sent piece message")
+		peer.mng.UpdateStatus(uint64(peer.mng.torrent.PieceLength), 0)
+		writePiece(message, peer.mng.torrent)
+	case cancel:
+		peer.logger.Info("Peer sent cancle message")
+	default:
+		peer.logger.Infof("Peer sent wrong code %d", message.code)
+	}
+}
+
+func (peer *Peer) sendMessage(message []byte) (int, error) {
+	peer.Conn.SetWriteDeadline(time.Now().Add(peerTimeout))
+	n, err := peer.Conn.Write(message)
+	peer.logger.WithFields(log.Fields{
+		"written": n,
+		"error":   err,
+	}).Debug("sendMessage to peer")
+	return n, err
+}
+
+func (peer *Peer) sendHave(payload []byte) {
+	indx := binary.BigEndian.Uint32(payload[:4])
+	peer.sendMessage(createHaveMessage(int(indx)))
 }
 
 func (p *Peer) setWriteTimeout(dur time.Duration) {
