@@ -57,12 +57,13 @@ func NewMng(torrent *Torrent, peerNum int) *torrentManager {
 		ips:            NewStringSet(),
 		peerNum:        peerNum,
 		Mutex:          sync.Mutex{},
+		wg:             &sync.WaitGroup{},
 		torrentStatus:  torrentStatus{0, 0, uint64(torrent.left)}}
 }
 
 // announce to all trackers from torrent file and gather
 // peers ip addresses
-func (mng *torrentManager) getIps() error {
+func (mng *torrentManager) getIps(ctx context.Context) error {
 	wg := sync.WaitGroup{}
 	for url := range mng.torrent.Trackers {
 		wg.Add(1)
@@ -70,7 +71,7 @@ func (mng *torrentManager) getIps() error {
 			defer wg.Done()
 
 			log.Infof("Sending announce to tracker %s", url)
-			ips, err := announceToTracker(url, mng.torrent)
+			ips, err := announceToTracker(ctx, url, mng.torrent)
 			if err != nil {
 				log.WithError(err).Errorf("tracker announce failed for: %s", url)
 				return
@@ -87,21 +88,33 @@ func (mng *torrentManager) getIps() error {
 	return nil
 }
 
-func announceToTracker(url string, torrent *Torrent) (map[string]struct{}, error) {
+func announceToTracker(ctx context.Context, url string, torrent *Torrent) (map[string]struct{}, error) {
 	tracker, err := CreateTracker(url)
 	if err != nil {
 		return nil, err
 	}
-
 	defer tracker.Close()
-	return tracker.Announce(context.Background(), torrent)
+
+	var ips map[string]struct{}
+	err = retry.Do(
+		func() error {
+			var err error
+			ips, err = tracker.Announce(ctx, torrent)
+			return err
+		},
+		retry.LastErrorOnly(true),
+		retry.OnRetry(func(n uint, err error) {
+			log.WithError(err).WithField("url", url).Warnf("failed tracker announce. attempt %d", n+1)
+		}),
+		retry.Attempts(5),
+		retry.Delay(500),
+		retry.DelayType(retry.BackOffDelay),
+		retry.Context(ctx),
+	)
+	return ips, err
 }
 
-func (mng *torrentManager) startDownload() error {
-	var ctx context.Context
-	ctx, mng.cancleCtx = context.WithCancel(context.Background())
-
-	mng.wg = &sync.WaitGroup{}
+func (mng *torrentManager) startDownload(ctx context.Context) error {
 	indx := 0
 	for ip := range mng.ips {
 		if indx >= mng.peerNum {
@@ -117,7 +130,7 @@ func (mng *torrentManager) startDownload() error {
 				},
 				retry.LastErrorOnly(true),
 				retry.OnRetry(func(n uint, err error) {
-					log.WithError(err).WithField("ip", ip).Warnf("failed announce. attempt %d", n+1)
+					log.WithError(err).WithField("ip", ip).Warnf("failed peer announce. attempt %d", n+1)
 				}),
 				retry.Attempts(5),
 				retry.Delay(500),
@@ -154,11 +167,14 @@ func (mng *torrentManager) startDownload() error {
 }
 
 func (mng *torrentManager) Download() error {
-	if err := mng.getIps(); err != nil {
+	var ctx context.Context
+	ctx, mng.cancleCtx = context.WithCancel(context.Background())
+
+	if err := mng.getIps(ctx); err != nil {
 		return err
 	}
 
-	return mng.startDownload()
+	return mng.startDownload(ctx)
 }
 
 func (mng *torrentManager) Close() {

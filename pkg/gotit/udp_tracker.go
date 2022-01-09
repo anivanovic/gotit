@@ -188,7 +188,7 @@ func readAnnounce(response []byte, transactionId uint32) (map[string]struct{}, e
 		"leachers": leachers,
 		"seaders":  seaders,
 	}).Info("CreateTracker message")
-	return parseStringPeers(bencode.StringElement(response[20:])), nil
+	return parseCompactPeers(bencode.StringElement(response[20:])), nil
 }
 
 func readScrape(response []byte, transactionId uint32) error {

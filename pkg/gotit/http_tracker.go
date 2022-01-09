@@ -3,6 +3,7 @@ package gotit
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -65,8 +66,8 @@ func (t *http_tracker) Announce(ctx context.Context, torrent *Torrent) (map[stri
 		"url":        t.Url.String(),
 	})
 	if res.StatusCode != 200 {
-		logger.Warn("Invalid request to http tracker")
-		return nil, errors.New("http tracker returned response code " + strconv.Itoa(res.StatusCode))
+		logger.Warn("Tracker response with error status code")
+		return nil, errors.New("http tracker error response code " + strconv.Itoa(res.StatusCode))
 	}
 
 	benc, err := bencode.Parse(body)
@@ -74,6 +75,10 @@ func (t *http_tracker) Announce(ctx context.Context, torrent *Torrent) (map[stri
 		return nil, err
 	}
 	dict := benc[0].(bencode.DictElement)
+	failure := dict.Value("failure reason")
+	if failure != nil {
+		return nil, fmt.Errorf("tracker returned failure reason: %s", failure)
+	}
 	if interval := dict.Value("interval"); interval != nil {
 		t.Interval = time.Second * time.Duration(interval.(bencode.IntElement))
 	}
@@ -92,18 +97,18 @@ func readPeers(elem bencode.Bencode) (map[string]struct{}, error) {
 
 		switch peers := peers.(type) {
 		case bencode.ListElement:
-			return parseListPeers(peers), nil
+			return parseBencodePeers(peers), nil
 		case bencode.StringElement:
-			return parseStringPeers(peers), nil
+			return parseCompactPeers(peers), nil
 		default:
-			return nil, errors.New("tracker: announce peers of wrong type")
+			return nil, errors.New("tracker: peers of wrong type")
 		}
 	}
 
 	return nil, errors.New("tracker: no peers in announce response")
 }
 
-func parseListPeers(peers bencode.ListElement) map[string]struct{} {
+func parseBencodePeers(peers bencode.ListElement) map[string]struct{} {
 	ips := make(map[string]struct{})
 	for _, p := range peers {
 		data, ok := p.(bencode.DictElement)
@@ -121,7 +126,7 @@ func parseListPeers(peers bencode.ListElement) map[string]struct{} {
 	return ips
 }
 
-func parseStringPeers(peers bencode.StringElement) map[string]struct{} {
+func parseCompactPeers(peers bencode.StringElement) map[string]struct{} {
 	ipData := []byte(peers.String())
 	peerCount := len(ipData) / 6
 
