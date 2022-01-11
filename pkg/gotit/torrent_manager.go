@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/avast/retry-go"
+	"github.com/bits-and-blooms/bitset"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -202,24 +203,21 @@ func (mng *torrentManager) UpdateStatus(downloaded, uploaded uint64) {
 
 func (mng *torrentManager) RequestFailed(req []byte) {
 	mng.Lock()
+	defer mng.Unlock()
 	mng.failedMessages = append(mng.failedMessages, req)
-	mng.Unlock()
 	log.Warn("Piece request faild")
 	log.WithField("size", len(mng.failedMessages)).Debug("Peer request failed messages")
 }
 
-func (mgn *torrentManager) NextRequest() []byte {
-	mgn.Lock()
-	defer mgn.Unlock()
+func (mgn *torrentManager) NextPieceRequest(bitset *bitset.BitSet) (uint, bool) {
+	return mgn.torrent.CreateNextRequestMessage(bitset)
+}
 
-	var req []byte
-	if mgn.failedMessages != nil && len(mgn.failedMessages) > 0 {
-		log.Debug("Next piece request given from failed messages pool")
-		req, mgn.failedMessages = mgn.failedMessages[0], mgn.failedMessages[1:]
-	} else {
-		log.Debug("Next piece request created from torrent bitset")
-		req = mgn.torrent.CreateNextRequestMessage()
+func (mng *torrentManager) FailedPieceMessage() []byte {
+	if len(mng.failedMessages) == 0 {
+		return nil
 	}
-
+	req := mng.failedMessages[len(mng.failedMessages)-1]
+	mng.failedMessages = mng.failedMessages[:len(mng.failedMessages)-1]
 	return req
 }

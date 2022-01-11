@@ -13,7 +13,7 @@ import (
 
 	"math/rand"
 
-	"github.com/anivanovic/gotit/pkg/bitset"
+	"github.com/bits-and-blooms/bitset"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -27,6 +27,7 @@ const (
 	request              // 6
 	piece                // 7
 	cancel               // 8
+	keepalive     = 99
 )
 
 const (
@@ -45,6 +46,9 @@ type Peer struct {
 	ClientStatus *PeerStatus
 	start        time.Time
 	logger       *log.Entry
+
+	blockIndx uint
+	pieceIndx uint
 }
 
 type PeerStatus struct {
@@ -61,7 +65,7 @@ type PeerMessage struct {
 
 var keepalivePeerMessage = &PeerMessage{
 	size:    0,
-	code:    99,
+	code:    keepalive,
 	Payload: nil,
 }
 
@@ -99,9 +103,9 @@ func createSignalMessage(code int) []byte {
 
 func createBitfieldMessage(peer *Peer) []byte {
 	message := new(bytes.Buffer)
-	binary.Write(message, binary.BigEndian, uint32(len(peer.Bitset.InternalSet)))
+	binary.Write(message, binary.BigEndian, peer.Bitset.Len())
 	binary.Write(message, binary.BigEndian, uint8(bitfield))
-	binary.Write(message, binary.BigEndian, peer.Bitset.InternalSet)
+	binary.Write(message, binary.BigEndian, peer.Bitset.Bytes())
 
 	return message.Bytes()
 }
@@ -142,10 +146,30 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 	}).Debug("Peer handshake message")
 
 	return ressCode != 19 ||
-		protocolSignature != string(BITTORENT_PROT[:]) ||
+		protocolSignature != string(bittorentProto[:]) ||
 		reservedBytes != 0 ||
 		!bytes.Equal(sentHash, hash) ||
 		!bytes.Equal(sentPeerId, peerId)
+}
+
+func (peer *Peer) createPieceMessage() []byte {
+	beginOffset := peer.blockIndx * blockLength
+	message := &bytes.Buffer{}
+	binary.Write(message, binary.BigEndian, uint32(13))
+	binary.Write(message, binary.BigEndian, uint8(request))
+	binary.Write(message, binary.BigEndian, uint32(peer.pieceIndx))
+	binary.Write(message, binary.BigEndian, uint32(beginOffset))
+	binary.Write(message, binary.BigEndian, uint32(blockLength))
+
+	peer.logger.WithFields(log.Fields{
+		"piece":  peer.pieceIndx,
+		"offset": beginOffset,
+		"length": blockLength,
+	}).Debug("created piece request")
+
+	peer.blockIndx++
+
+	return message.Bytes()
 }
 
 func newPeerStatus() *PeerStatus {
@@ -203,12 +227,21 @@ func writePiece(msg *PeerMessage, torrent *Torrent) {
 }
 
 func NewPeer(ip string, torrent *Torrent, mng *torrentManager) *Peer {
-	logger := log.WithFields(log.Fields{
-		"url": ip,
-	})
-
-	return &Peer{rand.Int(), ip, nil, mng, torrent, bitset.NewBitSet(torrent.PiecesNum),
-		newPeerStatus(), newPeerStatus(), time.Now(), logger}
+	return &Peer{
+		Id:           rand.Int(),
+		Url:          ip,
+		Conn:         nil,
+		mng:          mng,
+		Torrent:      torrent,
+		Bitset:       bitset.New(uint(torrent.PiecesNum)),
+		PeerStatus:   newPeerStatus(),
+		ClientStatus: newPeerStatus(),
+		start:        time.Now(),
+		logger: log.WithFields(log.Fields{
+			"url": ip,
+		}),
+		blockIndx: uint(0),
+	}
 }
 
 func (peer *Peer) connect() error {
@@ -250,6 +283,7 @@ func (peer *Peer) GoMessaging(ctx context.Context, wg *sync.WaitGroup) {
 	sentPieceMsg := false
 	defer wg.Done()
 
+	var requestMsg []byte
 	for {
 		select {
 		case <-ctx.Done():
@@ -271,14 +305,23 @@ func (peer *Peer) GoMessaging(ctx context.Context, wg *sync.WaitGroup) {
 			}
 		}
 
-		var requestMsg []byte
 		if !peer.PeerStatus.Choking && !sentPieceMsg {
-			requestMsg = peer.mng.NextRequest()
-			sentPieceMsg = true
+			if requestMsg == nil {
+				requestMsg = peer.nextRequestMessage()
+			}
+
+			if requestMsg == nil {
+				time.Sleep(time.Minute * 1)
+			}
+
 			_, err := peer.sendMessage(requestMsg)
 			if err != nil {
-				return
+				peer.logger.WithError(err).
+					Warn("error sending piece. sleeping 5 seconds")
+				time.Sleep(time.Second * 5)
+				continue
 			}
+			sentPieceMsg = true
 		}
 
 		response, err := readMessage(context.Background(), peer.Conn)
@@ -288,9 +331,34 @@ func (peer *Peer) GoMessaging(ctx context.Context, wg *sync.WaitGroup) {
 			}
 			return
 		}
+		if sentPieceMsg {
+			requestMsg = nil
+			sentPieceMsg = false
+		}
 
 		peer.handlePeerMesssage(NewPeerMessage(response))
 	}
+}
+
+func (peer *Peer) nextRequestMessage() []byte {
+	if peer.blockIndx >= uint(peer.Torrent.numOfBlocks) {
+		// when finished with piece download check if we have failed
+		// piece requests
+		if req := peer.mng.FailedPieceMessage(); req != nil {
+			return req
+		}
+
+		// get next piece index
+		if indx, found := peer.mng.NextPieceRequest(peer.Bitset); found {
+			peer.blockIndx = 0
+			peer.pieceIndx = indx
+		} else {
+			// we do not have any piece to request from the peer
+			return nil
+		}
+	}
+
+	return peer.createPieceMessage()
 }
 
 func (peer *Peer) checkKeepAlive() {
@@ -311,31 +379,31 @@ func (peer *Peer) handlePeerMesssage(message *PeerMessage) {
 
 	switch message.code {
 	case bitfield:
-		peer.logger.Debug("Peer sent bitfield message")
-		peer.Bitset.InternalSet = message.Payload
+		peer.logger.Info("Peer sent bitfield message")
+		peer.Bitset = createBitset(message.Payload)
 	case have:
-		peer.logger.Debug("Peer sent have message")
-		indx := int(binary.BigEndian.Uint32(message.Payload))
+		peer.logger.Info("Peer sent have message")
+		indx := uint(binary.BigEndian.Uint32(message.Payload))
 		peer.Bitset.Set(indx)
 	case interested:
-		peer.logger.Debug("Peer sent interested message")
+		peer.logger.Info("Peer sent interested message")
 		peer.PeerStatus.Interested = true
 		// return choke or unchoke
 	case notInterested:
-		peer.logger.Debug("Peer sent notInterested message")
+		peer.logger.Info("Peer sent notInterested message")
 		peer.PeerStatus.Interested = false
 		// return choke
 	case choke:
-		peer.logger.Debug("Peer sent choke message")
+		peer.logger.Info("Peer sent choke message")
 		peer.PeerStatus.Choking = true
 		time.Sleep(time.Second * 30)
 	case unchoke:
-		peer.logger.Debug("Peer sent unchoke message")
+		peer.logger.Info("Peer sent unchoke message")
 		peer.PeerStatus.Choking = false
 	case request:
-		peer.logger.Debug("Peer sent request message")
+		peer.logger.Info("Peer sent request message")
 	case piece:
-		peer.logger.Debug("Peer sent piece message")
+		peer.logger.Info("Peer sent piece message")
 		peer.mng.UpdateStatus(uint64(peer.mng.torrent.PieceLength), 0)
 		writePiece(message, peer.mng.torrent)
 	case cancel:
@@ -343,6 +411,29 @@ func (peer *Peer) handlePeerMesssage(message *PeerMessage) {
 	default:
 		peer.logger.Infof("Peer sent wrong code %d", message.code)
 	}
+}
+
+func createBitset(payload []byte) *bitset.BitSet {
+	set := make([]uint64, 0)
+	i := 0
+	lenPayload := len(payload)
+	for i+8 < lenPayload {
+		data := binary.BigEndian.Uint64(payload[i : i+8])
+		set = append(set, data)
+		i += 8
+	}
+	if i < lenPayload {
+		n := lenPayload - i
+		missing := 8 - n
+		data := payload[i:lenPayload]
+		for i := 0; i < missing; i++ {
+			data = append(data, 0)
+		}
+		last := binary.BigEndian.Uint64(data)
+		set = append(set, last)
+	}
+
+	return bitset.From(set)
 }
 
 func (peer *Peer) sendMessage(message []byte) (int, error) {

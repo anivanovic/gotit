@@ -8,17 +8,20 @@ import (
 	"math/rand"
 	"os"
 	"strconv"
+	"sync"
 
 	"github.com/anivanovic/gotit/pkg/bencode"
-	"github.com/anivanovic/gotit/pkg/bitset"
+	"github.com/bits-and-blooms/bitset"
 
 	log "github.com/sirupsen/logrus"
 )
 
-var BITTORENT_PROT = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
-var CLIENT_ID = [8]byte{'-', 'G', 'O', '0', '1', '0', '0', '-'}
+const blockLength uint = 16 * 1024
 
-const blockLength uint32 = 16 * 1024
+var (
+	bittorentProto = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
+	clientIdPrefix = [8]byte{'-', 'G', 'O', '0', '1', '0', '0', '-'}
+)
 
 type Torrent struct {
 	Trackers     StringSet
@@ -39,10 +42,10 @@ type Torrent struct {
 
 	downloaded, uploaded, left int
 
-	pieceOffset int
 	numOfBlocks int
 
 	Bitset *bitset.BitSet
+	bMutex *sync.Mutex
 }
 
 type TorrentFile struct {
@@ -52,7 +55,9 @@ type TorrentFile struct {
 
 func NewTorrent(dictElement bencode.DictElement) *Torrent {
 	//TODO make bencode api simpler
-	torrent := new(Torrent)
+	torrent := &Torrent{
+		bMutex: &sync.Mutex{},
+	}
 	torrent.PeerId = createClientId()
 	if dictElement.Value("created by") != nil {
 		torrent.CreatedBy = dictElement.Value("created by").String()
@@ -61,7 +66,7 @@ func NewTorrent(dictElement bencode.DictElement) *Torrent {
 	torrent.Name = dictElement.Value("info.name").String()
 	torrent.Pieces = []byte(dictElement.Value("info.pieces").String())
 	torrent.CreationDate, _ = strconv.ParseInt(dictElement.Value("creation date").String(), 10, 0)
-	torrent.Bitset = bitset.NewBitSet(torrent.PieceLength)
+	torrent.Bitset = bitset.New(uint(torrent.PieceLength))
 
 	torrent.Info = dictElement.Value("info").Encode()
 
@@ -106,7 +111,6 @@ func NewTorrent(dictElement bencode.DictElement) *Torrent {
 		torrent.left = completeLength
 	}
 	torrent.numOfBlocks = torrent.PieceLength / int(blockLength)
-	torrent.pieceOffset = -1
 
 	if comment := dictElement.Value("comment"); comment != nil {
 		torrent.Comment = comment.String()
@@ -119,8 +123,8 @@ func NewTorrent(dictElement bencode.DictElement) *Torrent {
 func (torrent *Torrent) CreateHandshake() []byte {
 	request := new(bytes.Buffer)
 	// 19 - as number of letters in protocol type string
-	binary.Write(request, binary.BigEndian, uint8(len(BITTORENT_PROT)))
-	binary.Write(request, binary.BigEndian, BITTORENT_PROT)
+	binary.Write(request, binary.BigEndian, uint8(len(bittorentProto)))
+	binary.Write(request, binary.BigEndian, bittorentProto)
 	binary.Write(request, binary.BigEndian, uint64(0))
 	binary.Write(request, binary.BigEndian, torrent.Hash)
 	binary.Write(request, binary.BigEndian, torrent.PeerId)
@@ -131,58 +135,34 @@ func (torrent *Torrent) CreateHandshake() []byte {
 // implemented BEP20
 func createClientId() []byte {
 	peerId := make([]byte, 20)
-	copy(peerId, CLIENT_ID[:])
+	copy(peerId, clientIdPrefix[:])
 
 	// create remaining random bytes
-	rand.Read(peerId[len(CLIENT_ID):])
+	rand.Read(peerId[len(clientIdPrefix):])
 	log.WithFields(log.Fields{
 		"PEER_ID": string(peerId),
 		"size":    len(peerId),
-	}).Info("Created client id")
+	}).Debug("Created client id")
 	return peerId
 }
 
-func (torrent *Torrent) SetDownloaded(pieceIndx int) {
+func (torrent *Torrent) SetDownloaded(pieceIndx uint) {
+	torrent.bMutex.Lock()
+	defer torrent.bMutex.Unlock()
 	torrent.Bitset.Set(pieceIndx)
 }
 
-func (torrent *Torrent) nextDownladPiece() int {
-	index := torrent.Bitset.FirstUnset(0)
-	torrent.SetDownloaded(index)
+func (torrent *Torrent) CreateNextRequestMessage(have *bitset.BitSet) (uint, bool) {
+	indx, found := uint(0), false
 
-	return index
-}
-
-func (torrent *Torrent) nextDownladBlock() int {
-	if torrent.pieceOffset < torrent.numOfBlocks-1 {
-		torrent.pieceOffset++
-	} else {
-		torrent.pieceOffset = 0
+	torrent.bMutex.Lock()
+	defer torrent.bMutex.Unlock()
+	for i, err := torrent.Bitset.NextClear(0); err; i, err = torrent.Bitset.NextClear(i) {
+		if have.Test(i) {
+			indx = i
+			found = true
+			break
+		}
 	}
-
-	return torrent.pieceOffset
-}
-
-func (torrent *Torrent) CreateNextRequestMessage() []byte {
-	beginOffset := torrent.nextDownladBlock() * int(blockLength)
-
-	// TODO replace call to FirstUnet
-	piece := torrent.Bitset.LastSet(0)
-	if beginOffset == 0 {
-		piece = torrent.nextDownladPiece()
-	}
-
-	message := new(bytes.Buffer)
-	binary.Write(message, binary.BigEndian, uint32(13))
-	binary.Write(message, binary.BigEndian, uint8(request))
-	binary.Write(message, binary.BigEndian, uint32(piece))
-	binary.Write(message, binary.BigEndian, uint32(beginOffset))
-	binary.Write(message, binary.BigEndian, uint32(blockLength))
-	log.WithFields(log.Fields{
-		"piece":  piece,
-		"offset": beginOffset,
-		"length": blockLength,
-	}).Debug("created piece request")
-
-	return message.Bytes()
+	return indx, found
 }
