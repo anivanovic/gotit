@@ -12,8 +12,7 @@ import (
 
 	"github.com/anivanovic/gotit/pkg/bencode"
 	"github.com/bits-and-blooms/bitset"
-
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const blockLength uint = 16 * 1024
@@ -76,12 +75,17 @@ func NewTorrent(dictElement bencode.DictElement) *Torrent {
 
 	trackers := dictElement.Value("announce-list")
 	trackersList, _ := trackers.(bencode.ListElement)
-	announce := dictElement.Value("announce").String()
+	// TODO merge reading of announce and ulr list
+	url_list, _ := dictElement.Value("url-list").(bencode.ListElement)
+	// announce := dictElement.Value("announce").String()
 	announceSet := NewStringSet()
-	announceSet.Add(announce)
+	// announceSet.Add(announce)
 	for _, elem := range trackersList {
 		elemList, _ := elem.(bencode.ListElement)
 		announceSet.Add(elemList[0].String())
+	}
+	for _, elem := range url_list {
+		announceSet.Add(elem.String())
 	}
 	torrent.Trackers = announceSet
 
@@ -139,10 +143,7 @@ func createClientId() []byte {
 
 	// create remaining random bytes
 	rand.Read(peerId[len(clientIdPrefix):])
-	log.WithFields(log.Fields{
-		"PEER_ID": string(peerId),
-		"size":    len(peerId),
-	}).Debug("Created client id")
+	log.Debug("Created client id", zap.String("id", string(peerId)))
 	return peerId
 }
 
@@ -161,6 +162,7 @@ func (torrent *Torrent) CreateNextRequestMessage(have *bitset.BitSet) (uint, boo
 		if have.Test(i) {
 			indx = i
 			found = true
+			torrent.Bitset.Set(i)
 			break
 		}
 	}

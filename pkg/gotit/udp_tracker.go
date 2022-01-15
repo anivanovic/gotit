@@ -14,7 +14,7 @@ import (
 	"errors"
 
 	"github.com/anivanovic/gotit/pkg/bencode"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const (
@@ -75,7 +75,7 @@ func (t *udp_tracker) Announce(ctx context.Context, torrent *Torrent) (map[strin
 	transactionId := createTransactionId()
 	request := createAnnounce(connId, transactionId, torrent)
 	t.Conn.Write(request)
-	log.WithField("ip", t.Conn.RemoteAddr()).Info("Announce sent to tracker")
+	log.Info("Announce sent to tracker", zap.Stringer("ip", t.Conn.RemoteAddr()))
 	response, err := readConn(context.TODO(), t.Conn)
 	if err != nil {
 		return nil, err
@@ -162,10 +162,9 @@ func readConnect(data []byte, transactionId uint32) (uint64, error) {
 	}
 
 	conId := binary.BigEndian.Uint64(data[8:16])
-	log.WithFields(log.Fields{
-		"connection id": conId,
-		"resCode":       connect,
-	}).Info("CreateTracker handshake response")
+	log.Info("CreateTracker handshake response",
+		zap.Uint64("conn id", conId),
+		zap.Int("res code", connect))
 
 	return conId, nil
 }
@@ -182,12 +181,11 @@ func readAnnounce(response []byte, transactionId uint32) (map[string]struct{}, e
 	leachers := binary.BigEndian.Uint32(response[12:16])
 	seaders := binary.BigEndian.Uint32(response[16:20])
 
-	log.WithFields(log.Fields{
-		"resCode":  announce,
-		"interval": interval,
-		"leachers": leachers,
-		"seaders":  seaders,
-	}).Info("CreateTracker message")
+	log.Info("CreateTracker message",
+		zap.Int("resCode", announce),
+		zap.Uint32("interval", interval),
+		zap.Uint32("leachers", leachers),
+		zap.Uint32("seaders", seaders))
 	return parseCompactPeers(bencode.StringElement(response[20:])), nil
 }
 

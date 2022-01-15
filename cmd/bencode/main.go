@@ -6,10 +6,12 @@ import (
 	"os"
 
 	"github.com/anivanovic/gotit/pkg/bencode"
-	"github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var file = flag.String("file", "", "Path to bencode file")
+
+var log, _ = zap.NewProduction()
 
 func main() {
 	flag.Parse()
@@ -21,12 +23,12 @@ func main() {
 
 	data, err := os.ReadFile(*file)
 	if err != nil {
-		logrus.Fatal("Error reading file: ", err)
+		log.Fatal("Error reading file", zap.Error(err))
 	}
 
 	elements, err := bencode.Parse(string(data))
 	if err != nil {
-		logrus.Fatal("Error parsing file: ", err)
+		log.Fatal("Error parsing file", zap.Error(err))
 	}
 
 	for _, el := range elements {

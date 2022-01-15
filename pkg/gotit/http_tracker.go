@@ -16,7 +16,7 @@ import (
 	"errors"
 
 	"github.com/anivanovic/gotit/pkg/bencode"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 type http_tracker struct {
@@ -60,13 +60,12 @@ func (t *http_tracker) Announce(ctx context.Context, torrent *Torrent) (map[stri
 	}
 
 	body := string(data)
-	logger := log.WithFields(log.Fields{
-		"statusCode": res.StatusCode,
-		"body":       body,
-		"url":        t.Url.String(),
-	})
 	if res.StatusCode != 200 {
-		logger.Warn("Tracker response with error status code")
+		log.Warn("Tracker response with error status code",
+			zap.Int(
+				"statusCode", res.StatusCode),
+			zap.String("body", body),
+			zap.Stringer("url", t.Url))
 		return nil, errors.New("http tracker error response code " + strconv.Itoa(res.StatusCode))
 	}
 

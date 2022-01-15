@@ -14,7 +14,7 @@ import (
 	"math/rand"
 
 	"github.com/bits-and-blooms/bitset"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const (
@@ -45,7 +45,7 @@ type Peer struct {
 	PeerStatus   *PeerStatus
 	ClientStatus *PeerStatus
 	start        time.Time
-	logger       *log.Entry
+	logger       *zap.Logger
 
 	blockIndx uint
 	pieceIndx uint
@@ -138,12 +138,11 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 	reservedBytes := binary.BigEndian.Uint64(handshake[20:28])
 	sentHash := handshake[28:48]
 	sentPeerId := handshake[48:68]
-	log.WithFields(log.Fields{
-		"resCode":            ressCode,
-		"protocol signature": protocolSignature,
-		"hash":               sentHash,
-		"peerId":             sentPeerId,
-	}).Debug("Peer handshake message")
+	log.Debug("Peer handshake message",
+		zap.Uint8("resCode", ressCode),
+		zap.String("protocol signature", protocolSignature),
+		zap.Binary("hash", sentHash),
+		zap.Binary("peerId", sentPeerId))
 
 	return ressCode != 19 ||
 		protocolSignature != string(bittorentProto[:]) ||
@@ -161,11 +160,11 @@ func (peer *Peer) createPieceMessage() []byte {
 	binary.Write(message, binary.BigEndian, uint32(beginOffset))
 	binary.Write(message, binary.BigEndian, uint32(blockLength))
 
-	peer.logger.WithFields(log.Fields{
-		"piece":  peer.pieceIndx,
-		"offset": beginOffset,
-		"length": blockLength,
-	}).Debug("created piece request")
+	peer.logger.Info("created piece request",
+		zap.Uint("piece", peer.pieceIndx),
+		zap.Uint("offset", beginOffset),
+		zap.Uint("length", blockLength),
+	)
 
 	peer.blockIndx++
 
@@ -179,10 +178,10 @@ func newPeerStatus() *PeerStatus {
 func writePiece(msg *PeerMessage, torrent *Torrent) {
 	indx := binary.BigEndian.Uint32(msg.Payload[:4])
 	offset := binary.BigEndian.Uint32(msg.Payload[4:8])
-	log.WithFields(log.Fields{
-		"index":  indx,
-		"offset": offset,
-	}).Debug("Received piece message for writing to file")
+	log.Info("Received piece message for writing to file",
+		zap.Uint32("index", indx),
+		zap.Uint32("offset", offset),
+		zap.Int("length", len(msg.Payload[8:])))
 	piecePoss := (int(indx)*torrent.PieceLength + int(offset))
 
 	if torrent.IsDirectory {
@@ -192,12 +191,10 @@ func writePiece(msg *PeerMessage, torrent *Torrent) {
 				piecePoss = piecePoss - torFile.Length
 				continue
 			} else {
-				log.WithFields(log.Fields{
-					"file":      torFile.Path,
-					"possition": piecePoss,
-				}).Debug("Writting to file ")
+				log.Debug("Writting to file ",
+					zap.String("file", torFile.Path),
+					zap.Int("possition", piecePoss))
 
-				log.Debug("Piece msg for writing")
 				pieceLen := len(msg.Payload[8:])
 				unoccupiedLength := torFile.Length - piecePoss
 				file := torrent.OsFiles[indx]
@@ -208,10 +205,6 @@ func writePiece(msg *PeerMessage, torrent *Torrent) {
 					piecePoss += unoccupiedLength
 					file = torrent.OsFiles[indx+1]
 
-					log.WithFields(log.Fields{
-						"file":      file.Name(),
-						"possition": piecePoss,
-					}).Debug("Writting to file ")
 					file.WriteAt(msg.Payload[8+unoccupiedLength:], 0)
 				}
 				file.Sync()
@@ -237,10 +230,8 @@ func NewPeer(ip string, torrent *Torrent, mng *torrentManager) *Peer {
 		PeerStatus:   newPeerStatus(),
 		ClientStatus: newPeerStatus(),
 		start:        time.Now(),
-		logger: log.WithFields(log.Fields{
-			"url": ip,
-		}),
-		blockIndx: uint(0),
+		logger:       log.With(zap.String("ip", ip)),
+		blockIndx:    uint(0),
 	}
 }
 
@@ -311,13 +302,13 @@ func (peer *Peer) GoMessaging(ctx context.Context, wg *sync.WaitGroup) {
 			}
 
 			if requestMsg == nil {
-				time.Sleep(time.Minute * 1)
+				return
 			}
 
-			_, err := peer.sendMessage(requestMsg)
-			if err != nil {
-				peer.logger.WithError(err).
-					Warn("error sending piece. sleeping 5 seconds")
+			if _, err := peer.sendMessage(requestMsg); err != nil {
+				peer.logger.
+					Warn("error sending piece. sleeping 5 seconds",
+						zap.Error(err))
 				time.Sleep(time.Second * 5)
 				continue
 			}
@@ -382,34 +373,34 @@ func (peer *Peer) handlePeerMesssage(message *PeerMessage) {
 		peer.logger.Info("Peer sent bitfield message")
 		peer.Bitset = createBitset(message.Payload)
 	case have:
-		peer.logger.Info("Peer sent have message")
+		peer.logger.Debug("Peer sent have message")
 		indx := uint(binary.BigEndian.Uint32(message.Payload))
 		peer.Bitset.Set(indx)
 	case interested:
-		peer.logger.Info("Peer sent interested message")
+		peer.logger.Debug("Peer sent interested message")
 		peer.PeerStatus.Interested = true
 		// return choke or unchoke
 	case notInterested:
-		peer.logger.Info("Peer sent notInterested message")
+		peer.logger.Debug("Peer sent notInterested message")
 		peer.PeerStatus.Interested = false
 		// return choke
 	case choke:
-		peer.logger.Info("Peer sent choke message")
+		peer.logger.Debug("Peer sent choke message")
 		peer.PeerStatus.Choking = true
 		time.Sleep(time.Second * 30)
 	case unchoke:
-		peer.logger.Info("Peer sent unchoke message")
+		peer.logger.Debug("Peer sent unchoke message")
 		peer.PeerStatus.Choking = false
 	case request:
-		peer.logger.Info("Peer sent request message")
+		peer.logger.Debug("Peer sent request message")
 	case piece:
-		peer.logger.Info("Peer sent piece message")
+		peer.logger.Debug("Peer sent piece message")
 		peer.mng.UpdateStatus(uint64(peer.mng.torrent.PieceLength), 0)
 		writePiece(message, peer.mng.torrent)
 	case cancel:
-		peer.logger.Info("Peer sent cancle message")
+		peer.logger.Debug("Peer sent cancle message")
 	default:
-		peer.logger.Infof("Peer sent wrong code %d", message.code)
+		peer.logger.Sugar().Debugf("Peer sent wrong code %d", message.code)
 	}
 }
 
@@ -439,10 +430,9 @@ func createBitset(payload []byte) *bitset.BitSet {
 func (peer *Peer) sendMessage(message []byte) (int, error) {
 	peer.Conn.SetWriteDeadline(time.Now().Add(peerTimeout))
 	n, err := peer.Conn.Write(message)
-	peer.logger.WithFields(log.Fields{
-		"written": n,
-		"error":   err,
-	}).Debug("sendMessage to peer")
+	peer.logger.Debug("sendMessage to peer",
+		zap.Int("written", n),
+		zap.Error(err))
 	return n, err
 }
 

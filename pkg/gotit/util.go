@@ -8,8 +8,10 @@ import (
 	"net"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
+
+var log = zap.L()
 
 type StringSet map[string]struct{}
 
@@ -58,7 +60,7 @@ func readMessage(ctx context.Context, conn net.Conn) ([]byte, error) {
 	buf := make([]byte, size)
 	_, err = io.ReadFull(conn, buf)
 	if err != nil {
-		log.WithError(err).Warn("error reading connection")
+		log.Warn("error reading connection", zap.Error(err))
 		return nil, err
 	}
 
@@ -80,9 +82,13 @@ func readConn(ctx context.Context, conn net.Conn) ([]byte, error) {
 	conn.SetDeadline(time.Now().Add(time.Second * 2))
 	data, err := ioutil.ReadAll(conn)
 	if err != nil {
-		log.WithError(err).Warn("error reading connection")
+		log.Warn("error reading connection", zap.Error(err))
 		return data, err
 	}
 
 	return data, nil
+}
+
+func SetLogger(l *zap.Logger) {
+	log = l
 }

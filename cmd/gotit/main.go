@@ -14,8 +14,8 @@ import (
 
 	"github.com/anivanovic/gotit/pkg/bencode"
 	"github.com/anivanovic/gotit/pkg/gotit"
-	runtime "github.com/banzaicloud/logrus-runtime-formatter"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var (
@@ -26,21 +26,22 @@ var (
 	peerNum        = flag.Int("peer-num", 100, "Number of concurrent peer download connections")
 )
 
+var log *zap.Logger
+
 // set up logger
 func initLogger() {
-	level, err := log.ParseLevel(*logLevel)
-	if err != nil {
-		level = log.FatalLevel
-	}
-	log.SetOutput(os.Stdout)
-	log.SetLevel(level)
+	l := zapcore.InfoLevel
+	l.Set(*logLevel)
 
-	formatter := runtime.Formatter{
-		ChildFormatter: &log.TextFormatter{
-			FullTimestamp: true,
-		},
-	}
-	log.SetFormatter(&formatter)
+	cfg := zap.NewProductionConfig()
+	cfg.Encoding = "console"
+	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	cfg.EncoderConfig.EncodeDuration = zapcore.SecondsDurationEncoder
+	cfg.Level = zap.NewAtomicLevelAt(l)
+	log, _ = cfg.Build()
+
+	zap.ReplaceGlobals(log)
+	gotit.SetLogger(log)
 }
 
 func defaultDownloadFolder() string {
@@ -63,12 +64,13 @@ func main() {
 		*downloadFolder = defaultDownloadFolder()
 	}
 	initLogger()
+	defer log.Sync()
 
 	torrentContent, _ := ioutil.ReadFile(*torrentPath)
 	torrentString := string(torrentContent)
 	benc, err := bencode.Parse(torrentString)
 	if err != nil {
-		log.Fatal("Error parsing torrent file: ", err)
+		log.Fatal("Error parsing torrent file", zap.Error(err))
 	}
 
 	// TODO: handle this better
@@ -96,8 +98,9 @@ func main() {
 		mng.Close()
 	}()
 
+	log.Info("staring download")
 	if err := mng.Download(); err != nil {
-		log.Fatal("Failed to download. Got error: ", err)
+		log.Fatal("Failed to download. Got error", zap.Error(err))
 	}
 
 	log.Info("Download finished")

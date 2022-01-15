@@ -8,7 +8,7 @@ import (
 
 	"github.com/avast/retry-go"
 	"github.com/bits-and-blooms/bitset"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 type torrentStatus struct {
@@ -71,13 +71,15 @@ func (mng *torrentManager) getIps(ctx context.Context) error {
 		go func(url string) {
 			defer wg.Done()
 
-			log.Infof("Sending announce to tracker %s", url)
+			log.Info("Sending announce to tracker", zap.String("url", url))
 			ips, err := announceToTracker(ctx, url, mng.torrent)
 			if err != nil {
-				log.WithError(err).Errorf("tracker announce failed for: %s", url)
+				log.Error("tracker announce failed",
+					zap.String("url", url),
+					zap.Error(err))
 				return
 			}
-			log.WithField("url", url).Infof("tracker sent %d peers", len(ips))
+			log.Sugar().With("url", url).Infof("tracker sent %d peers", len(ips))
 
 			mng.Lock()
 			defer mng.Unlock()
@@ -105,7 +107,10 @@ func announceToTracker(ctx context.Context, url string, torrent *Torrent) (map[s
 		},
 		retry.LastErrorOnly(true),
 		retry.OnRetry(func(n uint, err error) {
-			log.WithError(err).WithField("url", url).Warnf("failed tracker announce. attempt %d", n+1)
+			log.Warn("failed tracker announce",
+				zap.Error(err),
+				zap.String("url", url),
+				zap.Uint("attempt", n+1))
 		}),
 		retry.Attempts(5),
 		retry.Delay(time.Second*1),
@@ -131,7 +136,10 @@ func (mng *torrentManager) startDownload(ctx context.Context) error {
 				},
 				retry.LastErrorOnly(true),
 				retry.OnRetry(func(n uint, err error) {
-					log.WithError(err).WithField("ip", ip).Warnf("failed peer announce. attempt %d", n+1)
+					log.Warn("failed peer announce. attempt",
+						zap.Error(err),
+						zap.String("ip", ip),
+						zap.Uint("attempt", n+1))
 				}),
 				retry.Attempts(5),
 				retry.Delay(500),
@@ -139,7 +147,9 @@ func (mng *torrentManager) startDownload(ctx context.Context) error {
 				retry.Context(ctx),
 			)
 			if err != nil {
-				log.WithError(err).Warnf("error announcing to peer %s", ip)
+				log.Warn("error announcing to peer",
+					zap.String("ip", ip),
+					zap.Error(err))
 				mng.wg.Done()
 				return
 			}
@@ -156,10 +166,11 @@ func (mng *torrentManager) startDownload(ctx context.Context) error {
 	go func() {
 		for {
 			time.Sleep(time.Second * 10)
-			log.Infof("Download status - Downloaded: %d, Left: %d, Peers: %d",
-				mng.torrentStatus.Download(),
-				mng.torrentStatus.Left(),
-				len(mng.peerPool))
+			log.Sugar().
+				Infof("Download status - Downloaded: %d, Left: %d, Peers: %d",
+					mng.torrentStatus.Download(),
+					mng.torrentStatus.Left(),
+					len(mng.peerPool))
 		}
 	}()
 
@@ -206,7 +217,8 @@ func (mng *torrentManager) RequestFailed(req []byte) {
 	defer mng.Unlock()
 	mng.failedMessages = append(mng.failedMessages, req)
 	log.Warn("Piece request faild")
-	log.WithField("size", len(mng.failedMessages)).Debug("Peer request failed messages")
+	log.Debug("Peer request failed messages",
+		zap.Int("size", len(mng.failedMessages)))
 }
 
 func (mgn *torrentManager) NextPieceRequest(bitset *bitset.BitSet) (uint, bool) {
