@@ -2,6 +2,7 @@ package gotit
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -9,6 +10,10 @@ import (
 	"github.com/avast/retry-go"
 	"github.com/bits-and-blooms/bitset"
 	"go.uber.org/zap"
+)
+
+const (
+	mb = 1 << 20
 )
 
 type torrentStatus struct {
@@ -19,7 +24,7 @@ type torrentStatus struct {
 
 func (ts *torrentStatus) AddDownload(size uint64) {
 	atomic.AddUint64(&ts.download, size)
-	atomic.AddUint64(&ts.left, ^(size - 1))
+	atomic.AddUint64(&ts.left, -size)
 }
 
 func (ts *torrentStatus) AddUpload(size uint64) {
@@ -166,11 +171,11 @@ func (mng *torrentManager) startDownload(ctx context.Context) error {
 	go func() {
 		for {
 			time.Sleep(time.Second * 10)
-			log.Sugar().
-				Infof("Download status - Downloaded: %d, Left: %d, Peers: %d",
-					mng.torrentStatus.Download(),
-					mng.torrentStatus.Left(),
-					len(mng.peerPool))
+			fmt.Printf("Downloaded: %d, Left: %d, Peers: %d",
+				mng.torrentStatus.Download()/mb,
+				mng.torrentStatus.Left()/mb,
+				len(mng.peerPool))
+			fmt.Println()
 		}
 	}()
 

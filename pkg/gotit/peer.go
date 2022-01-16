@@ -32,7 +32,6 @@ const (
 
 const (
 	peerTimeout = time.Second * 5
-	readMax     = 1050
 )
 
 type Peer struct {
@@ -395,7 +394,7 @@ func (peer *Peer) handlePeerMesssage(message *PeerMessage) {
 		peer.logger.Debug("Peer sent request message")
 	case piece:
 		peer.logger.Debug("Peer sent piece message")
-		peer.mng.UpdateStatus(uint64(peer.mng.torrent.PieceLength), 0)
+		peer.mng.UpdateStatus(uint64(blockLength), 0)
 		writePiece(message, peer.mng.torrent)
 	case cancel:
 		peer.logger.Debug("Peer sent cancle message")
