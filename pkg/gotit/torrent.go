@@ -39,8 +39,6 @@ type Torrent struct {
 	IsDirectory  bool
 	PeerId       []byte
 
-	downloaded, uploaded, left int
-
 	numOfBlocks int
 
 	Bitset *bitset.BitSet
@@ -112,7 +110,6 @@ func NewTorrent(dictElement bencode.DictElement) *Torrent {
 		}
 		torrent.TorrentFiles = torrentFiles
 		torrent.Length = completeLength
-		torrent.left = completeLength
 	}
 	torrent.numOfBlocks = torrent.PieceLength / int(blockLength)
 

@@ -26,20 +26,21 @@ type http_tracker struct {
 }
 
 func httpTracker(url *url.URL) Tracker {
-	t := new(http_tracker)
-	t.Url = url
+	t := &http_tracker{
+		Url: url,
+	}
 
 	return t
 }
 
-func (t *http_tracker) Announce(ctx context.Context, torrent *Torrent) (map[string]struct{}, error) {
+func (t *http_tracker) Announce(ctx context.Context, mng *torrentManager) (map[string]struct{}, error) {
 	query := t.Url.Query()
-	query.Set("info_hash", string(torrent.Hash))
-	query.Set("peer_id", string(torrent.PeerId))
-	query.Set("port", strconv.Itoa(int(9505))) // TODO here goes listen port
-	query.Set("uploaded", "0")
-	query.Set("downloaded", "0")
-	query.Set("left", "0")
+	query.Set("info_hash", string(mng.torrent.Hash))
+	query.Set("peer_id", string(mng.torrent.PeerId))
+	query.Set("port", strconv.Itoa(mng.listenPort))
+	query.Set("downloaded", strconv.FormatUint(mng.torrentStatus.Download(), 10))
+	query.Set("uploaded", strconv.FormatUint(mng.torrentStatus.Upload(), 10))
+	query.Set("left", strconv.FormatUint(mng.torrentStatus.Left(), 10))
 	query.Set("compact", "1")
 	t.Url.RawQuery = query.Encode()
 

@@ -21,7 +21,7 @@ import (
 var (
 	torrentPath    = flag.String("file", "", "Path to torrent file")
 	downloadFolder = flag.String("out", "", "Path to download location")
-	listenPort     = flag.Uint("port", 8999, "Port used for listening incoming peer requests")
+	listenPort     = flag.Int("port", 8999, "Port used for listening incoming peer requests")
 	logLevel       = flag.String("log-level", "fatal", "Log level for printing messages to console")
 	peerNum        = flag.Int("peer-num", 100, "Number of concurrent peer download connections")
 )
@@ -84,7 +84,7 @@ func main() {
 	// TODO: do we need to create torrent here just to pass it
 	log.Info("Parsed torrent file")
 	torrent := gotit.NewTorrent(dict)
-	mng := gotit.NewMng(torrent, *peerNum)
+	mng := gotit.NewMng(torrent, *peerNum, *listenPort)
 
 	// TODO: this should be done by TorrentManager
 	createTorrentFiles(torrent)

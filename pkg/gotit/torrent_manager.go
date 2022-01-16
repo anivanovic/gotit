@@ -50,21 +50,26 @@ type torrentManager struct {
 	failedMessages [][]byte
 	ips            StringSet
 	peerNum        int
+	listenPort     int
 	cancleCtx      context.CancelFunc
 	wg             *sync.WaitGroup
 	sync.Mutex
 }
 
-func NewMng(torrent *Torrent, peerNum int) *torrentManager {
+func NewMng(torrent *Torrent, peerNum, listenPort int) *torrentManager {
 	return &torrentManager{
 		torrent:        torrent,
 		peerPool:       make(map[int]*Peer),
 		failedMessages: make([][]byte, 0),
 		ips:            NewStringSet(),
 		peerNum:        peerNum,
+		listenPort:     listenPort,
 		Mutex:          sync.Mutex{},
 		wg:             &sync.WaitGroup{},
-		torrentStatus:  torrentStatus{0, 0, uint64(torrent.left)}}
+		torrentStatus: torrentStatus{
+			download: 0,
+			upload:   0,
+			left:     uint64(torrent.Length)}}
 }
 
 // announce to all trackers from torrent file and gather
@@ -77,7 +82,7 @@ func (mng *torrentManager) getIps(ctx context.Context) error {
 			defer wg.Done()
 
 			log.Info("Sending announce to tracker", zap.String("url", url))
-			ips, err := announceToTracker(ctx, url, mng.torrent)
+			ips, err := announceToTracker(ctx, url, mng)
 			if err != nil {
 				log.Error("tracker announce failed",
 					zap.String("url", url),
@@ -96,7 +101,7 @@ func (mng *torrentManager) getIps(ctx context.Context) error {
 	return nil
 }
 
-func announceToTracker(ctx context.Context, url string, torrent *Torrent) (map[string]struct{}, error) {
+func announceToTracker(ctx context.Context, url string, mng *torrentManager) (map[string]struct{}, error) {
 	tracker, err := CreateTracker(url)
 	if err != nil {
 		return nil, err
@@ -107,7 +112,7 @@ func announceToTracker(ctx context.Context, url string, torrent *Torrent) (map[s
 	err = retry.Do(
 		func() error {
 			var err error
-			ips, err = tracker.Announce(ctx, torrent)
+			ips, err = tracker.Announce(ctx, mng)
 			return err
 		},
 		retry.LastErrorOnly(true),

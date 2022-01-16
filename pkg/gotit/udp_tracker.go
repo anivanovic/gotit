@@ -60,7 +60,7 @@ func (t *udp_tracker) Close() error {
 	return t.Conn.Close()
 }
 
-func (t *udp_tracker) Announce(ctx context.Context, torrent *Torrent) (map[string]struct{}, error) {
+func (t *udp_tracker) Announce(ctx context.Context, mng *torrentManager) (map[string]struct{}, error) {
 	connId, err := t.handshake(ctx)
 	if err != nil {
 		return nil, err
@@ -73,7 +73,7 @@ func (t *udp_tracker) Announce(ctx context.Context, torrent *Torrent) (map[strin
 	t.Conn.SetDeadline(deadline)
 
 	transactionId := createTransactionId()
-	request := createAnnounce(connId, transactionId, torrent)
+	request := createAnnounce(connId, transactionId, mng)
 	t.Conn.Write(request)
 	log.Info("Announce sent to tracker", zap.Stringer("ip", t.Conn.RemoteAddr()))
 	response, err := readConn(context.TODO(), t.Conn)
@@ -134,22 +134,21 @@ func (t *udp_tracker) readTrackerResponse(response []byte, transactionId uint32)
 	}
 }
 
-func createAnnounce(connId uint64, transactionId uint32, torrent *Torrent) []byte {
-	request := new(bytes.Buffer)
+func createAnnounce(connId uint64, transactionId uint32, mng *torrentManager) []byte {
+	request := &bytes.Buffer{}
 	binary.Write(request, binary.BigEndian, connId)
 	binary.Write(request, binary.BigEndian, uint32(announce))
 	binary.Write(request, binary.BigEndian, transactionId)
-	binary.Write(request, binary.BigEndian, torrent.Hash)
-	binary.Write(request, binary.BigEndian, torrent.PeerId)
-	binary.Write(request, binary.BigEndian, uint64(torrent.downloaded))
-	binary.Write(request, binary.BigEndian, uint64(torrent.left))
-	binary.Write(request, binary.BigEndian, uint64(torrent.uploaded))
+	binary.Write(request, binary.BigEndian, mng.torrent.Hash)
+	binary.Write(request, binary.BigEndian, mng.torrent.PeerId)
+	binary.Write(request, binary.BigEndian, uint64(mng.torrentStatus.Download()))
+	binary.Write(request, binary.BigEndian, uint64(mng.torrentStatus.Left()))
+	binary.Write(request, binary.BigEndian, uint64(mng.torrentStatus.Upload()))
 	binary.Write(request, binary.BigEndian, uint32(none))
 	binary.Write(request, binary.BigEndian, uint32(0))
-	randKey := rand.Int31()
-	binary.Write(request, binary.BigEndian, randKey)
+	binary.Write(request, binary.BigEndian, rand.Int31())
 	binary.Write(request, binary.BigEndian, int32(-1))
-	binary.Write(request, binary.BigEndian, 9404) // TODO here goes listen port
+	binary.Write(request, binary.BigEndian, int32(mng.listenPort))
 	return request.Bytes()
 }
 

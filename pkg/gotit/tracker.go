@@ -15,7 +15,7 @@ const (
 )
 
 type Tracker interface {
-	Announce(ctx context.Context, torrent *Torrent) (map[string]struct{}, error)
+	Announce(ctx context.Context, t *torrentManager) (map[string]struct{}, error)
 	io.Closer
 }
 
