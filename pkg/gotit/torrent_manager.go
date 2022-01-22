@@ -170,10 +170,11 @@ func (mng *torrentManager) startPeerDownload(ctx context.Context, peer *Peer) {
 func (mng *torrentManager) initStatisticsPrinting() {
 	go func() {
 		for mng.done.IsNotSet() {
-			fmt.Printf("Downloaded: %d, Left: %d, Peers: %d",
+			fmt.Printf("Downloaded: %d, Left: %d, Peers: %d - Speed %f",
 				mng.torrentStatus.Download()/mb,
 				mng.torrentStatus.Left()/mb,
-				len(mng.peerPool))
+				len(mng.peerPool),
+				mng.torrentStatus.Speed())
 			fmt.Println()
 			time.Sleep(time.Second * 10)
 		}
