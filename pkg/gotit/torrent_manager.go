@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/avast/retry-go"
@@ -13,37 +12,6 @@ import (
 	"github.com/tevino/abool/v2"
 	"go.uber.org/zap"
 )
-
-const (
-	mb = 1 << 20
-)
-
-type torrentStatus struct {
-	download uint64
-	upload   uint64
-	left     uint64
-}
-
-func (ts *torrentStatus) AddDownload(size uint64) {
-	atomic.AddUint64(&ts.download, size)
-	atomic.AddUint64(&ts.left, -size)
-}
-
-func (ts *torrentStatus) AddUpload(size uint64) {
-	atomic.AddUint64(&ts.upload, size)
-}
-
-func (ts *torrentStatus) Download() uint64 {
-	return atomic.LoadUint64(&ts.download)
-}
-
-func (ts *torrentStatus) Upload() uint64 {
-	return atomic.LoadUint64(&ts.upload)
-}
-
-func (ts *torrentStatus) Left() uint64 {
-	return atomic.LoadUint64(&ts.left)
-}
 
 type torrentManager struct {
 	peerNum    int
@@ -78,6 +46,7 @@ func NewMng(torrent *Torrent, peerNum, listenPort int) *torrentManager {
 		doneCh:         make(chan struct{}),
 		done:           abool.New(),
 		torrentStatus: torrentStatus{
+			start:    time.Now(),
 			download: 0,
 			upload:   0,
 			left:     uint64(torrent.Length)}}
