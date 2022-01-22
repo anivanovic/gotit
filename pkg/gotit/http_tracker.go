@@ -16,49 +16,60 @@ import (
 	"errors"
 
 	"github.com/anivanovic/gotit/pkg/bencode"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
-type http_tracker struct {
-	Url          *url.URL
-	Interval     time.Duration
-	lastAnnounce time.Time
+type tEvent string
+
+const (
+	startedEvent   tEvent = "started"
+	stoppedEvent   tEvent = "stopped"
+	completedEvent tEvent = "completed"
+)
+
+type httpTracker struct {
+	url       *url.URL
+	trackerId string
+	event     tEvent
+
+	waitInterval
 }
 
-func httpTracker(url *url.URL) Tracker {
-	t := &http_tracker{
-		Url: url,
+func newHttpTracker(url *url.URL) Tracker {
+	t := &httpTracker{
+		url:       url,
+		event:     startedEvent,
+		trackerId: uuid.NewString(),
+		waitInterval: waitInterval{
+			interval: time.Minute,
+		},
 	}
 
 	return t
 }
 
-func (t *http_tracker) Announce(ctx context.Context, mng *torrentManager) (map[string]struct{}, error) {
-	query := t.Url.Query()
-	query.Set("info_hash", string(mng.torrent.Hash))
-	query.Set("peer_id", string(mng.torrent.PeerId))
-	query.Set("port", strconv.Itoa(mng.listenPort))
-	query.Set("downloaded", strconv.FormatUint(mng.torrentStatus.Download(), 10))
-	query.Set("uploaded", strconv.FormatUint(mng.torrentStatus.Upload(), 10))
-	query.Set("left", strconv.FormatUint(mng.torrentStatus.Left(), 10))
-	query.Set("compact", "1")
-	t.Url.RawQuery = query.Encode()
+func (t httpTracker) Url() string {
+	return t.url.String()
+}
 
-	r, err := http.NewRequestWithContext(ctx, http.MethodGet, t.Url.String(), nil)
+func (t *httpTracker) Announce(ctx context.Context, mng *torrentManager) ([]string, error) {
+	t.buildQuer(mng)
+	r, err := http.NewRequestWithContext(ctx, http.MethodGet, t.Url(), nil)
 	if err != nil {
 		return nil, err
 	}
 
-	t.lastAnnounce = time.Now()
 	res, err := http.DefaultClient.Do(r)
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+
 	data, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
 	}
+	defer res.Body.Close()
 
 	body := string(data)
 	if res.StatusCode != 200 {
@@ -66,31 +77,45 @@ func (t *http_tracker) Announce(ctx context.Context, mng *torrentManager) (map[s
 			zap.Int(
 				"statusCode", res.StatusCode),
 			zap.String("body", body),
-			zap.Stringer("url", t.Url))
+			zap.String("url", t.Url()))
 		return nil, errors.New("http tracker error response code " + strconv.Itoa(res.StatusCode))
 	}
 
-	benc, err := bencode.Parse(body)
+	return t.readPeers(body)
+}
+
+func (t *httpTracker) buildQuer(mng *torrentManager) {
+	query := t.url.Query()
+	query.Set("info_hash", string(mng.torrent.Hash))
+	query.Set("peer_id", string(mng.torrent.PeerId))
+	query.Set("port", strconv.Itoa(mng.listenPort))
+	query.Set("downloaded", strconv.FormatUint(mng.torrentStatus.Download(), 10))
+	query.Set("uploaded", strconv.FormatUint(mng.torrentStatus.Upload(), 10))
+	query.Set("left", strconv.FormatUint(mng.torrentStatus.Left(), 10))
+	query.Set("numwant", "50")
+	query.Set("event", string(t.event))
+	query.Set("trackerid", t.trackerId)
+	query.Set("no_peer_id", "1")
+	query.Set("compact", "1")
+	t.url.RawQuery = query.Encode()
+}
+
+func (t *httpTracker) readPeers(res string) ([]string, error) {
+	benc, err := bencode.Parse(res)
 	if err != nil {
 		return nil, err
 	}
-	dict := benc[0].(bencode.DictElement)
-	failure := dict.Value("failure reason")
-	if failure != nil {
-		return nil, fmt.Errorf("tracker returned failure reason: %s", failure)
-	}
-	if interval := dict.Value("interval"); interval != nil {
-		t.Interval = time.Second * time.Duration(interval.(bencode.IntElement))
-	}
 
-	return readPeers(benc[0])
-}
+	if dict, ok := benc[0].(bencode.DictElement); ok {
+		failure := dict.Value("failure reason")
+		if failure != nil {
+			return nil, fmt.Errorf("tracker returned failure reason: %s", failure)
+		}
+		if interval := dict.Value("interval"); interval != nil {
+			t.interval = time.Duration(interval.(bencode.IntElement)) * time.Second
+		}
 
-func (t *http_tracker) Close() error { return nil }
-
-func readPeers(elem bencode.Bencode) (map[string]struct{}, error) {
-	if benDict, ok := elem.(bencode.DictElement); ok {
-		peers := benDict.Value("peers")
+		peers := dict.Value("peers")
 		if peers == nil {
 			return nil, errors.New("tracker: no peers in announce response")
 		}
@@ -101,15 +126,15 @@ func readPeers(elem bencode.Bencode) (map[string]struct{}, error) {
 		case bencode.StringElement:
 			return parseCompactPeers(peers), nil
 		default:
-			return nil, errors.New("tracker: peers of wrong type")
+			return nil, fmt.Errorf("tracker: expected List or String bencode peers element, got: %T", peers)
 		}
 	}
 
-	return nil, errors.New("tracker: no peers in announce response")
+	return nil, errors.New("tracker: response not bencoded dictionary")
 }
 
-func parseBencodePeers(peers bencode.ListElement) map[string]struct{} {
-	ips := make(map[string]struct{})
+func parseBencodePeers(peers bencode.ListElement) []string {
+	ips := make([]string, len(peers))
 	for _, p := range peers {
 		data, ok := p.(bencode.DictElement)
 		if !ok {
@@ -117,20 +142,18 @@ func parseBencodePeers(peers bencode.ListElement) map[string]struct{} {
 		}
 
 		ip := data.Value("ip").String()
-		// TODO: do we need peerId
-		// peerId := data.Value("peer id")
 		port := data.Value("port").String()
 		ipAddr := ip + ":" + port
-		ips[ipAddr] = struct{}{}
+		ips = append(ips, ipAddr)
 	}
 	return ips
 }
 
-func parseCompactPeers(peers bencode.StringElement) map[string]struct{} {
-	ipData := []byte(peers.String())
+func parseCompactPeers(peers bencode.StringElement) []string {
+	ipData := []byte(peers)
 	peerCount := len(ipData) / 6
 
-	byteMask, ips := 6, make(map[string]struct{})
+	byteMask, ips := 6, make([]string, peerCount)
 	for read := 0; read < peerCount; read++ {
 		ipAddress := net.IPv4(
 			ipData[byteMask*read],
@@ -139,7 +162,9 @@ func parseCompactPeers(peers bencode.StringElement) map[string]struct{} {
 			ipData[byteMask*read+3])
 		port := binary.BigEndian.Uint16(ipData[byteMask*read+4 : byteMask*read+6])
 		ipAddr := ipAddress.String() + ":" + strconv.Itoa(int(port))
-		ips[ipAddr] = struct{}{}
+		ips = append(ips, ipAddr)
 	}
 	return ips
 }
+
+func (t *httpTracker) Close() error { return nil }

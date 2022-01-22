@@ -41,8 +41,11 @@ type Torrent struct {
 
 	numOfBlocks int
 
-	Bitset *bitset.BitSet
-	bMutex *sync.Mutex
+	requested   *bitset.BitSet
+	requestedMu *sync.Mutex
+
+	downloaded   *bitset.BitSet
+	downloadedMu *sync.Mutex
 }
 
 type TorrentFile struct {
@@ -53,7 +56,8 @@ type TorrentFile struct {
 func NewTorrent(dictElement bencode.DictElement) *Torrent {
 	//TODO make bencode api simpler
 	torrent := &Torrent{
-		bMutex: &sync.Mutex{},
+		requestedMu:  &sync.Mutex{},
+		downloadedMu: &sync.Mutex{},
 	}
 	torrent.PeerId = createClientId()
 	if dictElement.Value("created by") != nil {
@@ -63,7 +67,8 @@ func NewTorrent(dictElement bencode.DictElement) *Torrent {
 	torrent.Name = dictElement.Value("info.name").String()
 	torrent.Pieces = []byte(dictElement.Value("info.pieces").String())
 	torrent.CreationDate, _ = strconv.ParseInt(dictElement.Value("creation date").String(), 10, 0)
-	torrent.Bitset = bitset.New(uint(torrent.PieceLength))
+	torrent.requested = bitset.New(uint(torrent.PieceLength))
+	torrent.downloaded = bitset.New(uint(torrent.PieceLength))
 
 	torrent.Info = dictElement.Value("info").Encode()
 
@@ -121,7 +126,7 @@ func NewTorrent(dictElement bencode.DictElement) *Torrent {
 	return torrent
 }
 
-func (torrent *Torrent) CreateHandshake() []byte {
+func (torrent Torrent) CreateHandshake() []byte {
 	request := new(bytes.Buffer)
 	// 19 - as number of letters in protocol type string
 	binary.Write(request, binary.BigEndian, uint8(len(bittorentProto)))
@@ -145,23 +150,29 @@ func createClientId() []byte {
 }
 
 func (torrent *Torrent) SetDownloaded(pieceIndx uint) {
-	torrent.bMutex.Lock()
-	defer torrent.bMutex.Unlock()
-	torrent.Bitset.Set(pieceIndx)
+	torrent.downloadedMu.Lock()
+	defer torrent.downloadedMu.Unlock()
+	torrent.downloaded.Set(pieceIndx)
 }
 
 func (torrent *Torrent) CreateNextRequestMessage(have *bitset.BitSet) (uint, bool) {
 	indx, found := uint(0), false
 
-	torrent.bMutex.Lock()
-	defer torrent.bMutex.Unlock()
-	for i, err := torrent.Bitset.NextClear(0); err; i, err = torrent.Bitset.NextClear(i) {
+	torrent.requestedMu.Lock()
+	defer torrent.requestedMu.Unlock()
+	for i, err := torrent.requested.NextClear(0); err; i, err = torrent.requested.NextClear(i) {
 		if have.Test(i) {
 			indx = i
 			found = true
-			torrent.Bitset.Set(i)
+			torrent.requested.Set(i)
 			break
 		}
 	}
 	return indx, found
+}
+
+func (torrent *Torrent) Done() bool {
+	torrent.downloadedMu.Lock()
+	defer torrent.downloadedMu.Unlock()
+	return torrent.downloaded.All()
 }

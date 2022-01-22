@@ -17,10 +17,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const protocolId uint64 = 0x41727101980
+
 const (
 	connect = iota
 	announce
-	scrape
 	con_error
 )
 
@@ -32,16 +33,17 @@ const (
 )
 
 // BEP15
-type udp_tracker struct {
-	Conn             *net.UDPConn
-	AnnounceInterval int
-	Ips              map[string]struct{}
+type udpTracker struct {
+	Conn *net.UDPConn
+	ips  []string
 
 	connectionId  uint64
 	transactionId uint32
+
+	waitInterval
 }
 
-func udpTracker(url *url.URL) (Tracker, error) {
+func newUdpTracker(url *url.URL) (Tracker, error) {
 	raddr, err := net.ResolveUDPAddr(url.Scheme, url.Host)
 	if err != nil {
 		return nil, err
@@ -52,15 +54,19 @@ func udpTracker(url *url.URL) (Tracker, error) {
 		return nil, err
 	}
 
-	tracker := udp_tracker{conn, 0, nil, 0, 0}
+	tracker := udpTracker{conn, nil, 0, 0, waitInterval{time.Minute}}
 	return &tracker, nil
 }
 
-func (t *udp_tracker) Close() error {
+func (t udpTracker) Url() string {
+	return t.Conn.RemoteAddr().String()
+}
+
+func (t *udpTracker) Close() error {
 	return t.Conn.Close()
 }
 
-func (t *udp_tracker) Announce(ctx context.Context, mng *torrentManager) (map[string]struct{}, error) {
+func (t *udpTracker) Announce(ctx context.Context, mng *torrentManager) ([]string, error) {
 	connId, err := t.handshake(ctx)
 	if err != nil {
 		return nil, err
@@ -82,13 +88,13 @@ func (t *udp_tracker) Announce(ctx context.Context, mng *torrentManager) (map[st
 	}
 
 	err = t.readTrackerResponse(response, transactionId)
-	return t.Ips, err
+	return t.ips, err
 }
 
-func (t *udp_tracker) handshake(ctx context.Context) (uint64, error) {
+func (t *udpTracker) handshake(ctx context.Context) (uint64, error) {
 	transactionId := createTransactionId()
 	request := new(bytes.Buffer)
-	binary.Write(request, binary.BigEndian, protocol_id)
+	binary.Write(request, binary.BigEndian, protocolId)
 	binary.Write(request, binary.BigEndian, uint32(connect))
 	binary.Write(request, binary.BigEndian, transactionId)
 
@@ -113,7 +119,7 @@ func (t *udp_tracker) handshake(ctx context.Context) (uint64, error) {
 	return t.connectionId, nil
 }
 
-func (t *udp_tracker) readTrackerResponse(response []byte, transactionId uint32) error {
+func (t *udpTracker) readTrackerResponse(response []byte, transactionId uint32) error {
 	actionCode := int(binary.BigEndian.Uint32(response[:4]))
 	var err error
 
@@ -122,12 +128,9 @@ func (t *udp_tracker) readTrackerResponse(response []byte, transactionId uint32)
 		t.connectionId, err = readConnect(response, transactionId)
 		return err
 	case announce:
-		t.Ips, err = readAnnounce(response, transactionId)
+		t.ips, err = t.readAnnounce(response, transactionId)
 		return err
-	case scrape:
-		return readScrape(response, transactionId)
 	case con_error:
-		// reads error message and always returns error
 		return readError(response, transactionId)
 	default:
 		return fmt.Errorf("unrecognized udp tracker response action code: %d", actionCode)
@@ -168,7 +171,7 @@ func readConnect(data []byte, transactionId uint32) (uint64, error) {
 	return conId, nil
 }
 
-func readAnnounce(response []byte, transactionId uint32) (map[string]struct{}, error) {
+func (t *udpTracker) readAnnounce(response []byte, transactionId uint32) ([]string, error) {
 	if len(response) < 20 {
 		return nil, errors.New("udp announce respons size less then 20")
 	}
@@ -176,21 +179,16 @@ func readAnnounce(response []byte, transactionId uint32) (map[string]struct{}, e
 		return nil, err
 	}
 
-	interval := binary.BigEndian.Uint32(response[8:12])
+	t.interval = time.Duration(binary.BigEndian.Uint32(response[8:12])) * time.Second
 	leachers := binary.BigEndian.Uint32(response[12:16])
 	seaders := binary.BigEndian.Uint32(response[16:20])
 
 	log.Info("CreateTracker message",
 		zap.Int("resCode", announce),
-		zap.Uint32("interval", interval),
+		zap.Duration("interval", t.interval),
 		zap.Uint32("leachers", leachers),
 		zap.Uint32("seaders", seaders))
 	return parseCompactPeers(bencode.StringElement(response[20:])), nil
-}
-
-func readScrape(response []byte, transactionId uint32) error {
-	// TODO implement srcape request
-	return nil
 }
 
 func readError(response []byte, transactionId uint32) error {

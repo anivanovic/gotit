@@ -9,17 +9,29 @@ import (
 	"io"
 )
 
-const (
-	timeout            = time.Second * 1
-	protocol_id uint64 = 0x41727101980
-)
+const timeout = time.Second * 1
 
 type Tracker interface {
-	Announce(ctx context.Context, t *torrentManager) (map[string]struct{}, error)
+	Announce(ctx context.Context, t *torrentManager) ([]string, error)
+	Url() string
+	WaitInterval(ctx context.Context) error
 	io.Closer
 }
 
-func CreateTracker(urlString string) (Tracker, error) {
+type waitInterval struct {
+	interval time.Duration
+}
+
+func (t waitInterval) WaitInterval(ctx context.Context) error {
+	select {
+	case <-time.After(t.interval):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func NewTracker(urlString string) (Tracker, error) {
 	url, err := url.Parse(urlString)
 	if err != nil {
 		return nil, err
@@ -27,9 +39,9 @@ func CreateTracker(urlString string) (Tracker, error) {
 
 	switch url.Scheme {
 	case "udp":
-		return udpTracker(url)
+		return newUdpTracker(url)
 	case "http", "https":
-		return httpTracker(url), nil
+		return newHttpTracker(url), nil
 	default:
 		return nil, fmt.Errorf("tracker: unsupported protocol %s", url.Scheme)
 	}
