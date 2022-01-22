@@ -29,14 +29,10 @@ const (
 	keepalive     = 99
 )
 
-const (
-	peerTimeout = time.Second * 5
-)
-
 type Peer struct {
 	Id           int
 	Url          string
-	conn         net.Conn
+	conn         *peerConn
 	mng          *torrentManager
 	Torrent      *Torrent
 	Bitset       *bitset.BitSet
@@ -243,7 +239,7 @@ func (peer *Peer) connect() error {
 	}
 
 	peer.lastMsgSent = time.Now()
-	peer.conn = conn
+	peer.conn = &peerConn{conn}
 	return nil
 }
 
@@ -253,10 +249,8 @@ func (peer *Peer) Announce() error {
 		return err
 	}
 
-	peer.setWriteTimeout(peerTimeout)
-	peer.conn.Write(peer.Torrent.CreateHandshake())
-
-	response, err := readHandshake(context.TODO(), peer.conn)
+	peer.conn.write(context.TODO(), peer.Torrent.CreateHandshake())
+	response, err := peer.conn.readHandshake(context.TODO())
 	if err != nil {
 		return err
 	}
@@ -324,8 +318,7 @@ func (peer *Peer) Run(ctx context.Context) {
 			sentPieceMsg = true
 		}
 
-		peer.setReadTimeout(peerTimeout)
-		response, err := readMessage(ctx, peer.conn)
+		response, err := peer.conn.readMessage(ctx)
 		if err != nil {
 			if sentPieceMsg {
 				peer.mng.RequestFailed(requestMsg)
@@ -357,7 +350,6 @@ func (peer *Peer) nextRequestMessage() []byte {
 
 		peer.blockIndx = 0
 		peer.pieceIndx = indx
-
 	}
 
 	return peer.createPieceMessage()
@@ -442,8 +434,7 @@ func createBitset(payload []byte) *bitset.BitSet {
 }
 
 func (peer *Peer) sendMessage(message []byte) (int, error) {
-	peer.conn.SetWriteDeadline(time.Now().Add(peerTimeout))
-	n, err := peer.conn.Write(message)
+	n, err := peer.conn.write(context.TODO(), message)
 	peer.logger.Debug("sendMessage to peer",
 		zap.Int("written", n),
 		zap.Error(err))
@@ -453,12 +444,4 @@ func (peer *Peer) sendMessage(message []byte) (int, error) {
 func (peer *Peer) sendHave(payload []byte) {
 	indx := binary.BigEndian.Uint32(payload[:4])
 	peer.sendMessage(createHaveMessage(int(indx)))
-}
-
-func (p *Peer) setWriteTimeout(dur time.Duration) {
-	p.conn.SetWriteDeadline(time.Now().Add(dur))
-}
-
-func (p *Peer) setReadTimeout(dur time.Duration) {
-	p.conn.SetReadDeadline(time.Now().Add(dur))
 }

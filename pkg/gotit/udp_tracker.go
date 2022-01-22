@@ -74,7 +74,7 @@ func (t *udpTracker) Announce(ctx context.Context, mng *torrentManager) ([]strin
 
 	deadline, ok := ctx.Deadline()
 	if !ok {
-		deadline = time.Now().Add(timeout)
+		deadline = time.Now().Add(trackerTimeout)
 	}
 	t.Conn.SetDeadline(deadline)
 
@@ -100,7 +100,7 @@ func (t *udpTracker) handshake(ctx context.Context) (uint64, error) {
 
 	deadline, ok := ctx.Deadline()
 	if !ok {
-		deadline = time.Now().Add(timeout)
+		deadline = time.Now().Add(trackerTimeout)
 	}
 	t.Conn.SetDeadline(deadline)
 	_, err := t.Conn.Write(request.Bytes())

@@ -9,7 +9,7 @@ import (
 	"io"
 )
 
-const timeout = time.Second * 1
+const trackerTimeout = time.Second * 1
 
 type Tracker interface {
 	Announce(ctx context.Context, t *torrentManager) ([]string, error)
