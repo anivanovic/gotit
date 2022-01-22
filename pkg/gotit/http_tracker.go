@@ -53,6 +53,8 @@ func (t httpTracker) Url() string {
 	return t.url.String()
 }
 
+func (t *httpTracker) Close() error { return nil }
+
 func (t *httpTracker) Announce(ctx context.Context, mng *torrentManager) ([]string, error) {
 	t.buildQuer(mng)
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, t.Url(), nil)
@@ -64,12 +66,12 @@ func (t *httpTracker) Announce(ctx context.Context, mng *torrentManager) ([]stri
 	if err != nil {
 		return nil, err
 	}
+	defer res.Body.Close()
 
 	data, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
 
 	body := string(data)
 	if res.StatusCode != 200 {
@@ -166,5 +168,3 @@ func parseCompactPeers(peers bencode.StringElement) []string {
 	}
 	return ips
 }
-
-func (t *httpTracker) Close() error { return nil }

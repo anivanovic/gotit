@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"fmt"
-	"net"
 	"time"
 
 	"errors"
@@ -32,7 +30,7 @@ const (
 type Peer struct {
 	Id           int
 	Url          string
-	conn         *peerConn
+	conn         *timeoutConn
 	mng          *torrentManager
 	Torrent      *Torrent
 	Bitset       *bitset.BitSet
@@ -233,14 +231,10 @@ func NewPeer(ip string, mng *torrentManager) *Peer {
 }
 
 func (peer *Peer) connect() error {
-	conn, err := net.DialTimeout("tcp", peer.Url, time.Second*2)
-	if err != nil {
-		return fmt.Errorf("peer connect failed: %w", err)
-	}
-
+	var err error
 	peer.lastMsgSent = time.Now()
-	peer.conn = &peerConn{conn}
-	return nil
+	peer.conn, err = NewTimeoutConn("tcp", peer.Url, peerTimeout)
+	return err
 }
 
 func (peer *Peer) Announce() error {
@@ -249,8 +243,8 @@ func (peer *Peer) Announce() error {
 		return err
 	}
 
-	peer.conn.write(context.TODO(), peer.Torrent.CreateHandshake())
-	response, err := peer.conn.readHandshake(context.TODO())
+	peer.sendMessage(peer.Torrent.CreateHandshake())
+	response, err := peer.conn.ReadPeerHandshake(context.TODO())
 	if err != nil {
 		return err
 	}
@@ -318,7 +312,7 @@ func (peer *Peer) Run(ctx context.Context) {
 			sentPieceMsg = true
 		}
 
-		response, err := peer.conn.readMessage(ctx)
+		response, err := peer.conn.ReadPeerMessage(ctx)
 		if err != nil {
 			if sentPieceMsg {
 				peer.mng.RequestFailed(requestMsg)
@@ -434,14 +428,9 @@ func createBitset(payload []byte) *bitset.BitSet {
 }
 
 func (peer *Peer) sendMessage(message []byte) (int, error) {
-	n, err := peer.conn.write(context.TODO(), message)
+	n, err := peer.conn.Write(context.TODO(), message)
 	peer.logger.Debug("sendMessage to peer",
 		zap.Int("written", n),
 		zap.Error(err))
 	return n, err
-}
-
-func (peer *Peer) sendHave(payload []byte) {
-	indx := binary.BigEndian.Uint32(payload[:4])
-	peer.sendMessage(createHaveMessage(int(indx)))
 }

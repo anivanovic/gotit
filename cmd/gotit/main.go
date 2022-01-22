@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 
 	"os/signal"
@@ -65,6 +67,10 @@ func main() {
 	}
 	initLogger()
 	defer log.Sync()
+
+	go func() {
+		http.ListenAndServe("localhost:6060", nil)
+	}()
 
 	torrentContent, _ := ioutil.ReadFile(*torrentPath)
 	torrentString := string(torrentContent)

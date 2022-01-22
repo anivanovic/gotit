@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/rand"
-	"net"
 	"net/url"
 	"time"
 
@@ -34,7 +33,7 @@ const (
 
 // BEP15
 type udpTracker struct {
-	Conn *net.UDPConn
+	conn *timeoutConn
 	ips  []string
 
 	connectionId  uint64
@@ -44,12 +43,7 @@ type udpTracker struct {
 }
 
 func newUdpTracker(url *url.URL) (Tracker, error) {
-	raddr, err := net.ResolveUDPAddr(url.Scheme, url.Host)
-	if err != nil {
-		return nil, err
-	}
-
-	conn, err := net.DialUDP(url.Scheme, nil, raddr)
+	conn, err := NewTimeoutConn(url.Scheme, url.Host, trackerTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -59,11 +53,11 @@ func newUdpTracker(url *url.URL) (Tracker, error) {
 }
 
 func (t udpTracker) Url() string {
-	return t.Conn.RemoteAddr().String()
+	return t.conn.c.RemoteAddr().String()
 }
 
 func (t *udpTracker) Close() error {
-	return t.Conn.Close()
+	return t.conn.c.Close()
 }
 
 func (t *udpTracker) Announce(ctx context.Context, mng *torrentManager) ([]string, error) {
@@ -72,17 +66,11 @@ func (t *udpTracker) Announce(ctx context.Context, mng *torrentManager) ([]strin
 		return nil, err
 	}
 
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		deadline = time.Now().Add(trackerTimeout)
-	}
-	t.Conn.SetDeadline(deadline)
-
 	transactionId := createTransactionId()
 	request := createAnnounce(connId, transactionId, mng)
-	t.Conn.Write(request)
-	log.Info("Announce sent to tracker", zap.Stringer("ip", t.Conn.RemoteAddr()))
-	response, err := readConn(context.TODO(), t.Conn)
+	t.conn.Write(ctx, request)
+	log.Info("Announce sent to tracker", zap.String("ip", t.Url()))
+	response, err := t.conn.ReadAll(context.TODO())
 	if err != nil {
 		return nil, err
 	}
@@ -98,19 +86,13 @@ func (t *udpTracker) handshake(ctx context.Context) (uint64, error) {
 	binary.Write(request, binary.BigEndian, uint32(connect))
 	binary.Write(request, binary.BigEndian, transactionId)
 
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		deadline = time.Now().Add(trackerTimeout)
-	}
-	t.Conn.SetDeadline(deadline)
-	_, err := t.Conn.Write(request.Bytes())
+	_, err := t.conn.Write(ctx, request.Bytes())
 	if err != nil {
 		return 0, err
 	}
 	log.Info("Sent handshake to tracker")
 
-	response := make([]byte, 16)
-	_, _, err = t.Conn.ReadFromUDP(response)
+	response, err := t.conn.ReadUdpHandshake(ctx)
 	if err != nil {
 		return 0, err
 	}
