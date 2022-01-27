@@ -15,7 +15,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const blockLength uint = 16 * 1024
+const blockLength uint = 64 * 1024
 
 var (
 	bittorentProto = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
@@ -150,8 +150,6 @@ func createClientId() []byte {
 }
 
 func (torrent *Torrent) SetDownloaded(pieceIndx uint) {
-	torrent.downloadedMu.Lock()
-	defer torrent.downloadedMu.Unlock()
 	torrent.downloaded.Set(pieceIndx)
 }
 
@@ -175,4 +173,58 @@ func (torrent *Torrent) Done() bool {
 	torrent.downloadedMu.Lock()
 	defer torrent.downloadedMu.Unlock()
 	return torrent.downloaded.All()
+}
+
+func (torrent *Torrent) writePiece(piecesCh <-chan *PeerMessage) {
+	writeFunc := func(msg *PeerMessage, piecePoss int) {
+		file := torrent.OsFiles[0]
+		file.WriteAt(msg.Payload[8:], int64(piecePoss))
+	}
+
+	if torrent.IsDirectory {
+		writeFunc = func(msg *PeerMessage, piecePoss int) {
+
+			torFiles := torrent.TorrentFiles
+			for indx, torFile := range torFiles {
+				if torFile.Length < piecePoss {
+					piecePoss = piecePoss - torFile.Length
+					continue
+				} else {
+					log.Debug("Writting to file ",
+						zap.String("file", torFile.Path),
+						zap.Int("possition", piecePoss))
+
+					pieceLen := len(msg.Payload[8:])
+					unoccupiedLength := torFile.Length - piecePoss
+					file := torrent.OsFiles[indx]
+					if unoccupiedLength > pieceLen {
+						file.WriteAt(msg.Payload[8:], int64(piecePoss))
+					} else {
+						file.WriteAt(msg.Payload[8:8+unoccupiedLength], int64(piecePoss))
+						piecePoss += unoccupiedLength
+						file = torrent.OsFiles[indx+1]
+
+						file.WriteAt(msg.Payload[8+unoccupiedLength:], 0)
+					}
+					break
+				}
+			}
+		}
+	}
+
+	for msg := range piecesCh {
+		indx := binary.BigEndian.Uint32(msg.Payload[:4])
+		offset := binary.BigEndian.Uint32(msg.Payload[4:8])
+		piecePoss := int(indx)*torrent.PieceLength + int(offset)
+
+		if (int(offset) + int(blockLength)) == torrent.PieceLength {
+			torrent.SetDownloaded(uint(indx))
+		}
+
+		writeFunc(msg, piecePoss)
+	}
+
+	for _, file := range torrent.OsFiles {
+		file.Sync()
+	}
 }

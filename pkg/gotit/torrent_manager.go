@@ -56,25 +56,30 @@ func (mng *torrentManager) Download() error {
 	var ctx context.Context
 	ctx, mng.cancleCtx = context.WithCancel(context.Background())
 
+	pieceCh := make(chan *PeerMessage, 1024)
+
 	mng.initStatisticsPrinting()
-	mng.getIps(ctx)
+	mng.getIps(ctx, pieceCh)
+
+	go mng.torrent.writePiece(pieceCh)
 
 	mng.waitDone()
 	mng.waitPeers()
+	close(pieceCh)
 	return nil // TODO: propagate errors
 }
 
 // announce to all trackers from torrent file and gather
 // peers ip addresses
-func (mng *torrentManager) getIps(ctx context.Context) {
+func (mng *torrentManager) getIps(ctx context.Context, pieceCh chan *PeerMessage) {
 	log.Info("trackers", zap.Any("urls", mng.torrent.Trackers))
 
 	for url := range mng.torrent.Trackers {
-		go mng.runTracker(ctx, url)
+		go mng.runTracker(ctx, url, pieceCh)
 	}
 }
 
-func (mng *torrentManager) runTracker(ctx context.Context, url string) error {
+func (mng *torrentManager) runTracker(ctx context.Context, url string, pieceCh chan *PeerMessage) error {
 	tracker, err := NewTracker(url)
 	if err != nil {
 		return err
@@ -94,7 +99,7 @@ func (mng *torrentManager) runTracker(ctx context.Context, url string) error {
 				zap.Error(err))
 		} else {
 			log.Sugar().With("url", url).Infof("tracker sent %d peers", len(ips))
-			go mng.initPeers(ctx, ips)
+			go mng.initPeers(ctx, ips, pieceCh)
 		}
 
 		if err := tracker.WaitInterval(ctx); err != nil {
@@ -103,9 +108,9 @@ func (mng *torrentManager) runTracker(ctx context.Context, url string) error {
 	}
 }
 
-func (mng *torrentManager) initPeers(ctx context.Context, ips []string) {
+func (mng *torrentManager) initPeers(ctx context.Context, ips []string, pieceCh chan *PeerMessage) {
 	for _, ip := range ips {
-		peer := NewPeer(ip, mng)
+		peer := NewPeer(ip, mng, pieceCh)
 		if mng.AddPeer(peer) {
 			mng.startPeerDownload(ctx, peer)
 		}
@@ -170,12 +175,11 @@ func (mng *torrentManager) startPeerDownload(ctx context.Context, peer *Peer) {
 func (mng *torrentManager) initStatisticsPrinting() {
 	go func() {
 		for mng.done.IsNotSet() {
-			fmt.Printf("Downloaded: %d, Left: %d, Peers: %d - Speed %f",
+			fmt.Printf("\rDownloaded: %d, Left: %d, Peers: %d - Speed %f",
 				mng.torrentStatus.Download()/mb,
 				mng.torrentStatus.Left()/mb,
 				len(mng.peerPool),
 				mng.torrentStatus.Speed())
-			fmt.Println()
 			time.Sleep(time.Second * 10)
 		}
 	}()
