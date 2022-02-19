@@ -68,17 +68,16 @@ func (t *httpTracker) Announce(ctx context.Context, mng *torrentManager) ([]stri
 	}
 	defer res.Body.Close()
 
-	data, err := ioutil.ReadAll(res.Body)
+	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
 	}
 
-	body := string(data)
 	if res.StatusCode != 200 {
 		log.Warn("Tracker response with error status code",
 			zap.Int(
 				"statusCode", res.StatusCode),
-			zap.String("body", body),
+			zap.String("body", string(body)),
 			zap.String("url", t.Url()))
 		return nil, errors.New("http tracker error response code " + strconv.Itoa(res.StatusCode))
 	}
@@ -102,13 +101,13 @@ func (t *httpTracker) buildQuer(mng *torrentManager) {
 	t.url.RawQuery = query.Encode()
 }
 
-func (t *httpTracker) readPeers(res string) ([]string, error) {
+func (t *httpTracker) readPeers(res []byte) ([]string, error) {
 	benc, err := bencode.Parse(res)
 	if err != nil {
 		return nil, err
 	}
 
-	if dict, ok := benc[0].(bencode.DictElement); ok {
+	if dict, ok := benc.(bencode.DictElement); ok {
 		failure := dict.Value("failure reason")
 		if failure != nil {
 			return nil, fmt.Errorf("tracker returned failure reason: %s", failure)

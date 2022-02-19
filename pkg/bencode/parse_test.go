@@ -3,6 +3,8 @@ package bencode
 import (
 	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestParse(t *testing.T) {
@@ -12,7 +14,7 @@ func TestParse(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    args
-		want    []Bencode
+		want    Bencode
 		wantErr bool
 	}{
 		{
@@ -20,15 +22,15 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "",
 			},
-			want:    []Bencode{},
-			wantErr: false,
+			want:    nil,
+			wantErr: true,
 		},
 		{
 			name: "parse integer",
 			args: args{
 				data: "i45902e",
 			},
-			want:    []Bencode{IntElement(45902)},
+			want:    IntElement(45902),
 			wantErr: false,
 		},
 		{
@@ -36,7 +38,7 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "5:hello",
 			},
-			want:    []Bencode{StringElement("hello")},
+			want:    StringElement("hello"),
 			wantErr: false,
 		},
 		{
@@ -44,7 +46,7 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "li45902e5:helloe",
 			},
-			want:    []Bencode{ListElement([]Bencode{IntElement(45902), StringElement("hello")})},
+			want:    ListElement([]Bencode{IntElement(45902), StringElement("hello")}),
 			wantErr: false,
 		},
 		{
@@ -52,9 +54,9 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "d5:helloi45902e5:world2:mee",
 			},
-			want: []Bencode{DictElement(map[StringElement]Bencode{
+			want: DictElement(map[string]Bencode{
 				"hello": IntElement(45902),
-				"world": StringElement("me")})},
+				"world": StringElement("me")}),
 			wantErr: false,
 		},
 		{
@@ -62,7 +64,7 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "6:hello",
 			},
-			want:    nil,
+			want:    StringElement(""),
 			wantErr: true,
 		},
 		{
@@ -70,7 +72,7 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "i45",
 			},
-			want:    nil,
+			want:    IntElement(0),
 			wantErr: true,
 		},
 		{
@@ -78,7 +80,7 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "li42ei22e",
 			},
-			want:    nil,
+			want:    ListElement(nil),
 			wantErr: true,
 		},
 		{
@@ -86,7 +88,7 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "d5:firsti45",
 			},
-			want:    nil,
+			want:    DictElement(nil),
 			wantErr: true,
 		},
 		{
@@ -94,13 +96,13 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "d2:firsti45e",
 			},
-			want:    nil,
+			want:    DictElement(nil),
 			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Parse(tt.args.data)
+			got, err := Parse([]byte(tt.args.data))
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -110,4 +112,19 @@ func TestParse(t *testing.T) {
 			}
 		})
 	}
+}
+
+var data, _ = readTorrentFile("ubuntu-21.04-desktop-amd64.iso.torrent")
+
+func BenchmarkParse(b *testing.B) {
+	var r Bencode
+	var err error
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r, err = Parse(data)
+	}
+	b.StopTimer()
+	assert.NotNil(b, r)
+	assert.NoError(b, err)
 }

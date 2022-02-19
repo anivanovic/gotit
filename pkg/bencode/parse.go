@@ -2,8 +2,7 @@ package bencode
 
 import (
 	"errors"
-	"strconv"
-	"unicode"
+	"unsafe"
 )
 
 var (
@@ -12,23 +11,18 @@ var (
 	ErrStringLength = errors.New("string length invalid")
 )
 
-var (
-	stringNil = StringElement("")
-	intNil    = IntElement(0)
-)
-
-func Parse(data string) ([]Bencode, error) {
-	sc := NewScanner(data)
+func Parse(data []byte) (Bencode, error) {
+	sc := newScanner(data)
 	return sc.Parse()
 }
 
 type scanner struct {
 	start   int
 	current int
-	bencode string
+	bencode []byte
 }
 
-func NewScanner(data string) *scanner {
+func newScanner(data []byte) *scanner {
 	return &scanner{
 		start:   0,
 		current: 0,
@@ -36,21 +30,15 @@ func NewScanner(data string) *scanner {
 	}
 }
 
-func (s *scanner) Parse() ([]Bencode, error) {
-	elements := make([]Bencode, 0)
-	for !s.IsFinished() {
-		e, err := s.Next()
-		if err != nil {
-			return nil, err
-		}
-		elements = append(elements, e)
+func (s *scanner) Parse() (Bencode, error) {
+	if s.IsFinished() {
+		return nil, errors.New("bencode: no data")
 	}
-
-	return elements, nil
+	return s.Next()
 }
 
 func (s *scanner) Next() (Bencode, error) {
-	switch s.advance() {
+	switch s.peek() {
 	case 'l':
 		return s.readList()
 	case 'd':
@@ -58,7 +46,8 @@ func (s *scanner) Next() (Bencode, error) {
 	case 'i':
 		return s.readInt()
 	default:
-		return s.readString()
+		v, err := s.readString()
+		return StringElement(v), err
 	}
 }
 
@@ -71,14 +60,14 @@ func (s *scanner) advance() rune {
 	return rune(s.bencode[s.current-1])
 }
 
-func (s scanner) peek() rune {
+func (s scanner) peek() byte {
 	if s.IsFinished() {
-		return rune(0) // return '\0' character
+		return 0 // return '\0' character
 	}
-	return rune(s.bencode[s.current])
+	return s.bencode[s.current]
 }
 
-func (s *scanner) match(r rune) bool {
+func (s *scanner) match(r byte) bool {
 	if s.peek() == r {
 		s.advance()
 		s.position()
@@ -88,7 +77,7 @@ func (s *scanner) match(r rune) bool {
 	return false
 }
 
-func (s scanner) read() string {
+func (s scanner) read() []byte {
 	return s.bencode[s.start:s.current]
 }
 
@@ -97,47 +86,54 @@ func (s *scanner) position() {
 }
 
 func (s scanner) isDigit() bool {
-	return unicode.IsDigit(s.peek())
+	return s.peek() >= '0' && s.peek() <= '9'
 }
 
 func (s *scanner) number() (int, error) {
+	n := 0
 	for s.isDigit() {
+		d := int(s.peek() - '0')
+		n += d
+		n *= 10
 		s.advance()
 	}
-	value := s.read()
+	n /= 10
+
 	s.position()
-	return strconv.Atoi(value)
+	return n, nil
 }
 
 func (s *scanner) readInt() (IntElement, error) {
+	s.advance()
 	s.position()
+
 	n, err := s.number()
 	if err != nil {
-		return intNil, err
+		return 0, err
 	}
 
 	if !s.match('e') {
-		return intNil, ErrElementEnd
+		return 0, ErrElementEnd
 	}
 	return IntElement(n), nil
 }
 
-func (s *scanner) readString() (StringElement, error) {
+func (s *scanner) readString() (string, error) {
 	length, err := s.number()
 	if err != nil {
-		return stringNil, err
+		return "", err
 	}
 
 	if !s.match(':') {
-		return stringNil, ErrColonMissing
+		return "", ErrColonMissing
 	}
 	s.current += length
 	// we need to check if we are trying to read beyond string length.
 	if s.current > len(s.bencode) {
-		return stringNil, ErrStringLength
+		return "", ErrStringLength
 	}
 
-	strElement := StringElement(s.read())
+	strElement := b2s(s.read())
 	s.position()
 
 	return strElement, nil
@@ -145,6 +141,7 @@ func (s *scanner) readString() (StringElement, error) {
 
 func (s *scanner) readList() (ListElement, error) {
 	bencodeList := make([]Bencode, 0)
+	s.advance()
 	s.position()
 
 	for s.peek() != 'e' && !s.IsFinished() {
@@ -159,11 +156,12 @@ func (s *scanner) readList() (ListElement, error) {
 		return nil, ErrElementEnd
 	}
 
-	return ListElement(bencodeList), nil
+	return bencodeList, nil
 }
 
 func (s *scanner) readDict() (DictElement, error) {
-	dict := make(map[StringElement]Bencode)
+	dict := make(map[string]Bencode)
+	s.advance()
 	s.position()
 
 	for s.peek() != 'e' && !s.IsFinished() {
@@ -183,4 +181,8 @@ func (s *scanner) readDict() (DictElement, error) {
 	}
 
 	return DictElement(dict), nil
+}
+
+func b2s(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
 }

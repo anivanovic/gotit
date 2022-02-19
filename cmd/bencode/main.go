@@ -26,12 +26,10 @@ func main() {
 		log.Fatal("Error reading file", zap.Error(err))
 	}
 
-	elements, err := bencode.Parse(string(data))
+	el, err := bencode.Parse(data)
 	if err != nil {
 		log.Fatal("Error parsing file", zap.Error(err))
 	}
 
-	for _, el := range elements {
-		fmt.Println(el.String())
-	}
+	fmt.Println(el.String())
 }

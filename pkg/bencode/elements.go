@@ -1,9 +1,7 @@
 package bencode
 
 import (
-	"fmt"
 	"strconv"
-	"strings"
 )
 
 type Bencode interface {
@@ -37,10 +35,11 @@ func (bencode ListElement) String() string {
 	data := "["
 
 	for i := 0; i < len(bencode); i++ {
-		if bencode[i] == nil {
-			fmt.Println("element nil: ", i)
+		el := bencode[i]
+		if el == nil {
+			continue
 		}
-		data += bencode[i].String() + ", "
+		data += el.String() + ", "
 	}
 
 	return data[:len(data)-2] + "]"
@@ -54,7 +53,7 @@ func (bencode ListElement) Encode() string {
 	return encoded + "e"
 }
 
-type DictElement map[StringElement]Bencode
+type DictElement map[string]Bencode
 
 func (bencode DictElement) String() string {
 	return bencode.printValue(bencode, "\t")
@@ -63,7 +62,7 @@ func (bencode DictElement) String() string {
 func (bencode DictElement) Encode() string {
 	encoded := "d"
 	for k, v := range bencode {
-		encoded += k.Encode()
+		encoded += k
 		encoded += v.Encode()
 	}
 	encoded += "e"
@@ -76,7 +75,7 @@ func (bencode DictElement) printValue(value Bencode, tabs string) string {
 	if ok {
 		var data = "{\n"
 		for k, v := range dict {
-			data += tabs + k.String() + ": " + bencode.printValue(v, tabs+"\t") + "\n"
+			data += tabs + k + ": " + bencode.printValue(v, tabs+"\t") + "\n"
 		}
 
 		return data + "}\n"
@@ -86,18 +85,5 @@ func (bencode DictElement) printValue(value Bencode, tabs string) string {
 }
 
 func (dict DictElement) Value(key string) Bencode {
-	keys := strings.Split(key, ".")
-
-	var element Bencode
-	element = dict
-	for _, key := range keys {
-		benKey := StringElement(key)
-		if castDict, ok := element.(DictElement); ok {
-			element = castDict[benKey]
-		} else {
-			element = nil
-		}
-	}
-
-	return element
+	return dict[key]
 }

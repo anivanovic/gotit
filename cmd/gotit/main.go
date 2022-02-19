@@ -4,14 +4,13 @@ import (
 
 	// _ "net/http/pprof"
 	"os"
-
-	"os/signal"
 	"syscall"
 
 	"io/ioutil"
 
 	"flag"
 
+	"os/signal"
 	"os/user"
 
 	"github.com/anivanovic/gotit/pkg/bencode"
@@ -72,17 +71,15 @@ func main() {
 	// 	http.ListenAndServe("localhost:6060", nil)
 	// }()
 
-	torrentContent, _ := ioutil.ReadFile(*torrentPath)
-	torrentString := string(torrentContent)
-	benc, err := bencode.Parse(torrentString)
+	data, _ := ioutil.ReadFile(*torrentPath)
+	benc, err := bencode.Parse(data)
 	if err != nil {
 		log.Fatal("Error parsing torrent file", zap.Error(err))
 	}
 
 	// TODO: handle this better
-	benDict := benc[0]
-	log.Debug(benDict.String())
-	dict, ok := benDict.(bencode.DictElement)
+	log.Debug(benc.String())
+	dict, ok := benc.(bencode.DictElement)
 	if !ok {
 		log.Fatal("Invalid torrent file")
 	}
