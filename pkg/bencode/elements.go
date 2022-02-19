@@ -4,56 +4,57 @@ import (
 	"strconv"
 )
 
-type Bencode interface {
-	String() string
-	Encode() string
-}
+type (
+	Bencode interface {
+		String() string
+		Encode() string
+	}
 
-type StringElement string
+	IntElement    int
+	StringElement string
+	ListElement   []Bencode
+	DictElement   map[string]Bencode
+)
 
 func (bencode StringElement) String() string {
 	return string(bencode)
 }
 
 func (bencode StringElement) Encode() string {
-	return strconv.Itoa(len(bencode)) + ":" + string(bencode)
+	return strconv.Itoa(len(bencode)) + ":" + bencode.String()
 }
-
-type IntElement int
 
 func (bencode IntElement) String() string {
 	return strconv.Itoa(int(bencode))
 }
 
 func (bencode IntElement) Encode() string {
-	return "i" + strconv.Itoa(int(bencode)) + "e"
+	return "i" + bencode.String() + "e"
 }
 
-type ListElement []Bencode
-
 func (bencode ListElement) String() string {
-	data := "["
+	data := "[\n"
 
-	for i := 0; i < len(bencode); i++ {
-		el := bencode[i]
+	for _, el := range bencode {
 		if el == nil {
 			continue
 		}
-		data += el.String() + ", "
+		data += "\t" + el.String() + ",\n"
 	}
 
-	return data[:len(data)-2] + "]"
+	return data + "]"
 }
 
 func (bencode ListElement) Encode() string {
 	encoded := "l"
-	for _, element := range bencode {
-		encoded += element.Encode()
+	for _, el := range bencode {
+		if el == nil {
+			continue
+		}
+		encoded += el.Encode()
 	}
 	return encoded + "e"
 }
-
-type DictElement map[string]Bencode
 
 func (bencode DictElement) String() string {
 	return bencode.printValue(bencode, "\t")
@@ -62,12 +63,18 @@ func (bencode DictElement) String() string {
 func (bencode DictElement) Encode() string {
 	encoded := "d"
 	for k, v := range bencode {
-		encoded += k
+		if v == nil {
+			continue
+		}
+		encoded += StringElement(k).Encode()
 		encoded += v.Encode()
 	}
-	encoded += "e"
 
-	return encoded
+	return encoded + "e"
+}
+
+func (dict DictElement) Value(key string) Bencode {
+	return dict[key]
 }
 
 func (bencode DictElement) printValue(value Bencode, tabs string) string {
@@ -75,15 +82,14 @@ func (bencode DictElement) printValue(value Bencode, tabs string) string {
 	if ok {
 		var data = "{\n"
 		for k, v := range dict {
-			data += tabs + k + ": " + bencode.printValue(v, tabs+"\t") + "\n"
+			if v == nil {
+				continue
+			}
+			data += tabs + k + ": " + bencode.printValue(v, tabs+"\t") + ",\n"
 		}
 
-		return data + "}\n"
+		return data + "}"
 	} else {
 		return value.String()
 	}
-}
-
-func (dict DictElement) Value(key string) Bencode {
-	return dict[key]
 }
