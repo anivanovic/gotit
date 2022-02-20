@@ -7,12 +7,12 @@ import (
 	"math"
 	"math/rand"
 	"os"
-	"strconv"
 	"sync"
 
 	"github.com/anivanovic/gotit/pkg/bencode"
 	"github.com/bits-and-blooms/bitset"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const blockLength uint = 64 * 1024
@@ -21,6 +21,45 @@ var (
 	bittorentProto = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
 	clientIdPrefix = [8]byte{'-', 'G', 'O', '0', '1', '0', '0', '-'}
 )
+
+type TorrentMetadata struct {
+	Announce     string   `ben:"announce"`
+	AnnounceList []string `ben:"announce-list"`
+	UrlList      []string `ben:"url-list"`
+	Info         struct {
+		Files []struct {
+			Length int64  `ben:"length"`
+			Path   string `ben:"path"`
+		} `ben:"files"`
+		Length      int64  `ben:"length"`
+		Name        string `ben:"name"`
+		PieceLength int    `ben:"piece length"`
+		Pieces      string `ben:"pieces"`
+	} `ben:"info"`
+	InfoDict     bencode.DictElement `ben:"info"`
+	Comment      string              `ben:"comment"`
+	CreatedBy    string              `ben:"created by"`
+	CreationDate int64               `ben:"creation date"`
+}
+
+// MarshalLogObject implements zapcore.ObjectMarshaler for logging
+func (f *TorrentMetadata) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	if f == nil {
+		return nil
+	}
+
+	enc.AddString("announce", f.Announce)
+	enc.AddReflected("announce-list", f.AnnounceList)
+	enc.AddReflected("url-list", f.UrlList)
+	enc.AddInt64("info.lenght", f.Info.Length)
+	enc.AddInt("info.piece_length", f.Info.PieceLength)
+	enc.AddString("info.name", f.Info.Name)
+	enc.AddReflected("info.files", f.Info.Files)
+	enc.AddString("comment", f.Comment)
+	enc.AddString("created by", f.CreatedBy)
+	enc.AddInt64("cration date", f.CreationDate)
+	return nil
+}
 
 type Torrent struct {
 	Trackers     StringSet
@@ -34,10 +73,11 @@ type Torrent struct {
 	Name         string
 	CreationDate int64
 	CreatedBy    string
-	Info         string
 	Comment      string
 	IsDirectory  bool
 	PeerId       []byte
+
+	Metadata *TorrentMetadata
 
 	numOfBlocks int
 
@@ -53,62 +93,59 @@ type TorrentFile struct {
 	Length int
 }
 
-func NewTorrent(dictElement bencode.DictElement) *Torrent {
-	//TODO make bencode api simpler
+func NewTorrent(meta *TorrentMetadata) *Torrent {
 	torrent := &Torrent{
 		requestedMu:  &sync.Mutex{},
 		downloadedMu: &sync.Mutex{},
+		Metadata:     meta,
 	}
 	torrent.PeerId = createClientId()
-	if dictElement.Value("created by") != nil {
-		torrent.CreatedBy = dictElement.Value("created by").String()
-	}
-	torrent.PieceLength, _ = strconv.Atoi(dictElement.Value("info.piece length").String())
-	torrent.Name = dictElement.Value("info.name").String()
-	torrent.Pieces = []byte(dictElement.Value("info.pieces").String())
-	torrent.CreationDate, _ = strconv.ParseInt(dictElement.Value("creation date").String(), 10, 0)
+	torrent.Name = meta.Info.Name
+	torrent.CreatedBy = meta.CreatedBy
+	torrent.CreationDate = meta.CreationDate
+	torrent.Comment = meta.Comment
+	torrent.PieceLength = meta.Info.PieceLength
+	torrent.Pieces = []byte(meta.Info.Pieces)
+	torrent.PiecesNum = int(math.Ceil(float64(torrent.Length) / float64(torrent.PieceLength)))
 	torrent.requested = bitset.New(uint(torrent.PieceLength))
 	torrent.downloaded = bitset.New(uint(torrent.PieceLength))
+	torrent.numOfBlocks = torrent.PieceLength / int(blockLength)
 
-	torrent.Info = dictElement.Value("info").Encode()
-
+	info := meta.InfoDict.Encode()
 	sha := sha1.New()
-	sha.Write([]byte(torrent.Info))
+	sha.Write([]byte(info))
 	torrent.Hash = sha.Sum(nil)
 
-	trackers := dictElement.Value("announce-list")
-	trackersList, _ := trackers.(bencode.ListElement)
-	// TODO merge reading of announce and ulr list
-	url_list, _ := dictElement.Value("url-list").(bencode.ListElement)
-	// announce := dictElement.Value("announce").String()
+	trackers := meta.AnnounceList
+	url_list := meta.UrlList
+	announce := meta.Announce
 	announceSet := NewStringSet()
-	// announceSet.Add(announce)
-	for _, elem := range trackersList {
-		elemList, _ := elem.(bencode.ListElement)
-		announceSet.Add(elemList[0].String())
+	announceSet.Add(announce)
+	for _, el := range trackers {
+		announceSet.Add(el)
 	}
-	for _, elem := range url_list {
-		announceSet.Add(elem.String())
+	for _, el := range url_list {
+		announceSet.Add(el)
 	}
 	torrent.Trackers = announceSet
 
-	if dictElement.Value("info.length") != nil {
+	if meta.Info.Length != 0 {
 		torrent.IsDirectory = false
-		length := dictElement.Value("info.length").(bencode.IntElement)
+		length := meta.Info.Length
 		torrent.Length = int(length)
 	} else {
 		torrent.IsDirectory = true
-		files := dictElement.Value("info.files")
-		filesList, _ := files.(bencode.ListElement)
+		files := meta.Info.Files
 
 		torrentFiles := make([]TorrentFile, 0)
 		var completeLength int = 0
-		for _, file := range filesList {
-			fileDict, _ := file.(bencode.DictElement)
-			length := fileDict.Value("length").(bencode.IntElement)
-			pathList, _ := fileDict.Value("path").(bencode.ListElement)
-			torrentFile := TorrentFile{Path: pathList[0].String(),
-				Length: int(length)}
+		for _, file := range files {
+			length := file.Length
+			pathList := file.Path
+			torrentFile := TorrentFile{
+				Path:   pathList,
+				Length: int(length),
+			}
 			completeLength += torrentFile.Length
 
 			torrentFiles = append(torrentFiles, torrentFile)
@@ -116,12 +153,6 @@ func NewTorrent(dictElement bencode.DictElement) *Torrent {
 		torrent.TorrentFiles = torrentFiles
 		torrent.Length = completeLength
 	}
-	torrent.numOfBlocks = torrent.PieceLength / int(blockLength)
-
-	if comment := dictElement.Value("comment"); comment != nil {
-		torrent.Comment = comment.String()
-	}
-	torrent.PiecesNum = int(math.Ceil(float64(torrent.Length) / float64(torrent.PieceLength)))
 
 	return torrent
 }

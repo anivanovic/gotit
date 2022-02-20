@@ -71,22 +71,18 @@ func main() {
 	// 	http.ListenAndServe("localhost:6060", nil)
 	// }()
 
-	data, _ := ioutil.ReadFile(*torrentPath)
-	benc, err := bencode.Parse(data)
+	data, err := ioutil.ReadFile(*torrentPath)
 	if err != nil {
+		log.Fatal("error reading torrent file", zap.String("file_path", *torrentPath), zap.Error(err))
+	}
+	torrentMeta := &gotit.TorrentMetadata{}
+	if err := bencode.Unmarshal(data, torrentMeta); err != nil {
 		log.Fatal("Error parsing torrent file", zap.Error(err))
 	}
+	log.Debug("torrent file", zap.Object("torrentMeta", torrentMeta))
 
-	// TODO: handle this better
-	log.Debug(benc.String())
-	dict, ok := benc.(bencode.DictElement)
-	if !ok {
-		log.Fatal("Invalid torrent file")
-	}
-
-	// TODO: do we need to create torrent here just to pass it
 	log.Info("Parsed torrent file")
-	torrent := gotit.NewTorrent(dict)
+	torrent := gotit.NewTorrent(torrentMeta)
 	mng := gotit.NewMng(torrent, *peerNum, *listenPort)
 
 	// TODO: this should be done by TorrentManager
@@ -103,7 +99,7 @@ func main() {
 
 	log.Info("staring download")
 	if err := mng.Download(); err != nil {
-		log.Fatal("Failed to download. Got error", zap.Error(err))
+		log.Fatal("Torrent download error", zap.Error(err))
 	}
 
 	log.Info("Download finished")
