@@ -116,25 +116,26 @@ func main() {
 }
 
 func createTorrentFiles(torrent *gotit.Torrent) error {
-	torrentDirPath := filepath.Join(*downloadFolder, torrent.Name)
+	path := filepath.Join(*downloadFolder, torrent.Name)
+	var filePaths []string
 	if torrent.IsDirectory {
-		if err := os.Mkdir(torrentDirPath, os.ModeDir); err != nil {
+		if err := os.Mkdir(path, os.ModeDir); err != nil {
 			return err
 		}
 
-		for _, torrentFile := range torrent.TorrentFiles {
-			file, err := os.Create(torrentDirPath + "/" + torrentFile.Path)
-			if err != nil {
-				return err
-			}
-			torrent.OsFiles = append(torrent.OsFiles, file)
+		for _, tf := range torrent.TorrentFiles {
+			filePaths = append(filePaths, filepath.Join(path, tf.Path))
 		}
 	} else {
-		torrentFile, err := os.Create(torrentDirPath)
+		filePaths = append(filePaths, path)
+	}
+
+	for _, path := range filePaths {
+		f, err := os.Create(path)
 		if err != nil {
 			return err
 		}
-		torrent.OsFiles = append(torrent.OsFiles, torrentFile)
+		torrent.OsFiles = append(torrent.OsFiles, f)
 	}
 
 	return nil
