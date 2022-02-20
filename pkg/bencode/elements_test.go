@@ -98,3 +98,35 @@ func TestBencode_Encode(t *testing.T) {
 		})
 	}
 }
+
+func TestPrettyPrint(t *testing.T) {
+	t.Parallel()
+
+	bencode := ListElement{
+		DictElement{
+			"1": StringElement("value"),
+			"2": IntElement(1),
+			"3": ListElement{StringElement("string")},
+			"4": DictElement{},
+		},
+		StringElement("string"),
+	}
+	expected :=
+		`[
+	{
+		1: value,
+		2: 1,
+		3: [
+			string,
+		],
+		4: {},
+	},
+	string,
+]`
+
+	got := bencode.String()
+	if got != expected {
+		t.Errorf("Bencode does not print pretty: got = %v, expected = %v", got, expected)
+	}
+
+}

@@ -33,16 +33,7 @@ func (bencode IntElement) Encode() string {
 }
 
 func (bencode ListElement) String() string {
-	data := "[\n"
-
-	for _, el := range bencode {
-		if el == nil {
-			continue
-		}
-		data += "\t" + el.String() + ",\n"
-	}
-
-	return data + "]"
+	return prettyPrint(bencode, "")
 }
 
 func (bencode ListElement) Encode() string {
@@ -57,7 +48,7 @@ func (bencode ListElement) Encode() string {
 }
 
 func (bencode DictElement) String() string {
-	return bencode.printValue(bencode, "\t")
+	return prettyPrint(bencode, "")
 }
 
 func (bencode DictElement) Encode() string {
@@ -77,19 +68,48 @@ func (dict DictElement) Value(key string) Bencode {
 	return dict[key]
 }
 
-func (bencode DictElement) printValue(value Bencode, tabs string) string {
-	dict, ok := value.(DictElement)
-	if ok {
-		var data = "{\n"
-		for k, v := range dict {
+func prettyPrint(value Bencode, tabs string) string {
+	switch value := value.(type) {
+	case DictElement:
+		tabs = addTab(tabs)
+		data := "{" + newLine(tabs)
+
+		for k, v := range value {
 			if v == nil {
 				continue
 			}
-			data += tabs + k + ": " + bencode.printValue(v, tabs+"\t") + ",\n"
+			data += k + ": " + prettyPrint(v, tabs) + "," + newLine(tabs)
 		}
 
-		return data + "}"
-	} else {
+		if len(data) == 2+len(tabs) {
+			return "{}"
+		}
+
+		return data[:len(data)-1] + "}"
+	case ListElement:
+		tabs = addTab(tabs)
+		data := "[" + newLine(tabs)
+		for _, el := range value {
+			if el == nil {
+				continue
+			}
+			data += prettyPrint(el, tabs) + "," + newLine(tabs)
+		}
+
+		if len(data) == 2+len(tabs) {
+			return "[]"
+		}
+
+		return data[:len(data)-1] + "]"
+	default:
 		return value.String()
 	}
+}
+
+func addTab(tabs string) string {
+	return tabs + "\t"
+}
+
+func newLine(tabs string) string {
+	return "\n" + tabs
 }
