@@ -23,9 +23,10 @@ type TorrentFile struct {
 		PieceLength int    `ben:"piece length"`
 		Pieces      string `ben:"pieces"`
 	} `ben:"info"`
-	Comment      string `ben:"comment"`
-	CreatedBy    string `ben:"created by"`
-	CreationDate int64  `ben:"creation date"`
+	InfoDict     DictElement `ben:"info"`
+	Comment      string      `ben:"comment"`
+	CreatedBy    string      `ben:"created by"`
+	CreationDate int64       `ben:"creation date"`
 }
 
 func readTorrentFile(name string) ([]byte, error) {
@@ -62,6 +63,7 @@ func TestUnmarshal(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -83,6 +85,8 @@ func TestUnmarshal(t *testing.T) {
 			assert.Equal(t, 524288, info.PieceLength)
 			assert.NotEmpty(t, info.Pieces)
 			assert.NotEmpty(t, info.Files)
+			assert.NotNil(t, torrent.InfoDict)
+			assert.Equal(t, StringElement("Tears of Steel"), torrent.InfoDict.Value("name"))
 			files := info.Files
 			for _, f := range files {
 				assert.NotZero(t, f.Length)

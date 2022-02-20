@@ -150,6 +150,21 @@ func setField(f reflect.Value, value Bencode) error {
 		if err != nil {
 			return err
 		}
+	case reflect.Map:
+		m := reflect.MakeMap(ftype)
+		values, ok := value.(DictElement)
+		if !ok {
+			return &TypeError{
+				ElementName: "",
+				FieldType:   f.Type().Name(),
+				BencodeType: reflect.TypeOf(value).String(),
+			}
+		}
+
+		for k, v := range values {
+			m.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v))
+		}
+		f.Set(m)
 	}
 
 	return nil
