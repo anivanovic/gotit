@@ -4,6 +4,7 @@ import (
 
 	// _ "net/http/pprof"
 	"os"
+	"path/filepath"
 	"syscall"
 
 	"io/ioutil"
@@ -20,11 +21,11 @@ import (
 )
 
 var (
-	torrentPath    = flag.String("file", "", "Path to torrent file")
+	torrentPath    = flag.String("torrent", "", "Path to torrent file")
 	downloadFolder = flag.String("out", "", "Path to download location")
 	listenPort     = flag.Int("port", 8999, "Port used for listening incoming peer requests")
 	logLevel       = flag.String("log-level", "fatal", "Log level for printing messages to console")
-	peerNum        = flag.Int("peer-num", 100, "Number of concurrent peer download connections")
+	peerNum        = flag.Int("peer-num", 30, "Number of concurrent peer download connections")
 )
 
 var log *zap.Logger
@@ -47,7 +48,8 @@ func initLogger() {
 
 func defaultDownloadFolder() string {
 	user, _ := user.Current()
-	defaultDownloadFolder := user.HomeDir + string(os.PathSeparator) + "Downloads"
+
+	defaultDownloadFolder := filepath.Join(user.HomeDir, "Downloads")
 	if _, err := os.Stat(defaultDownloadFolder); os.IsNotExist(err) {
 		return user.HomeDir
 	}
@@ -61,11 +63,19 @@ func main() {
 		flag.PrintDefaults()
 		os.Exit(2)
 	}
+
+	initLogger()
+	defer log.Sync()
+
+	if _, err := os.Stat(*torrentPath); os.IsNotExist(err) {
+		log.Fatal("Torrent file does not exist", zap.String("path", *torrentPath), zap.Error(err))
+	}
 	if *downloadFolder == "" {
 		*downloadFolder = defaultDownloadFolder()
 	}
-	initLogger()
-	defer log.Sync()
+	if _, err := os.Stat(*downloadFolder); os.IsNotExist(err) {
+		log.Fatal("Download folder does not exist", zap.String("path", *downloadFolder), zap.Error(err))
+	}
 
 	// go func() {
 	// 	http.ListenAndServe("localhost:6060", nil)
@@ -73,7 +83,7 @@ func main() {
 
 	data, err := ioutil.ReadFile(*torrentPath)
 	if err != nil {
-		log.Fatal("error reading torrent file", zap.String("file_path", *torrentPath), zap.Error(err))
+		log.Fatal("error reading torrent file", zap.String("path", *torrentPath), zap.Error(err))
 	}
 	torrentMeta := &gotit.TorrentMetadata{}
 	if err := bencode.Unmarshal(data, torrentMeta); err != nil {
@@ -81,7 +91,7 @@ func main() {
 	}
 	log.Debug("torrent file", zap.Object("torrentMeta", torrentMeta))
 
-	log.Info("Parsed torrent file")
+	log.Info("Torrent file parsed")
 	torrent := gotit.NewTorrent(torrentMeta)
 	mng := gotit.NewMng(torrent, *peerNum, *listenPort)
 
@@ -106,7 +116,7 @@ func main() {
 }
 
 func createTorrentFiles(torrent *gotit.Torrent) error {
-	torrentDirPath := *downloadFolder + torrent.Name
+	torrentDirPath := filepath.Join(*downloadFolder, torrent.Name)
 	if torrent.IsDirectory {
 		if err := os.Mkdir(torrentDirPath, os.ModeDir); err != nil {
 			return err
