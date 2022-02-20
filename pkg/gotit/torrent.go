@@ -7,10 +7,12 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/anivanovic/gotit/pkg/bencode"
 	"github.com/bits-and-blooms/bitset"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -93,7 +95,7 @@ type TorrentFile struct {
 	Length int
 }
 
-func NewTorrent(meta *TorrentMetadata) *Torrent {
+func NewTorrent(meta *TorrentMetadata, downloadDir string) (*Torrent, error) {
 	torrent := &Torrent{
 		requestedMu:  &sync.Mutex{},
 		downloadedMu: &sync.Mutex{},
@@ -140,11 +142,9 @@ func NewTorrent(meta *TorrentMetadata) *Torrent {
 		torrentFiles := make([]TorrentFile, 0)
 		var completeLength int = 0
 		for _, file := range files {
-			length := file.Length
-			pathList := file.Path
 			torrentFile := TorrentFile{
-				Path:   pathList,
-				Length: int(length),
+				Path:   file.Path,
+				Length: int(file.Length),
 			}
 			completeLength += torrentFile.Length
 
@@ -154,7 +154,11 @@ func NewTorrent(meta *TorrentMetadata) *Torrent {
 		torrent.Length = completeLength
 	}
 
-	return torrent
+	if err := torrent.createTorrentFiles(downloadDir); err != nil {
+		return nil, err
+	}
+
+	return torrent, nil
 }
 
 func (torrent Torrent) CreateHandshake() []byte {
@@ -206,6 +210,32 @@ func (torrent *Torrent) Done() bool {
 	return torrent.downloaded.All()
 }
 
+func (torrent *Torrent) createTorrentFiles(root string) error {
+	path := filepath.Join(root, torrent.Name)
+	var filePaths []string
+	if torrent.IsDirectory {
+		if err := os.Mkdir(path, os.ModePerm); err != nil && os.IsNotExist(err) {
+			return err
+		}
+
+		for _, tf := range torrent.TorrentFiles {
+			filePaths = append(filePaths, filepath.Join(path, tf.Path))
+		}
+	} else {
+		filePaths = append(filePaths, path)
+	}
+
+	for _, path := range filePaths {
+		f, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+		torrent.OsFiles = append(torrent.OsFiles, f)
+	}
+
+	return nil
+}
+
 func (torrent *Torrent) writePiece(piecesCh <-chan *PeerMessage) {
 	writeFunc := func(msg *PeerMessage, piecePoss int) {
 		file := torrent.OsFiles[0]
@@ -254,8 +284,12 @@ func (torrent *Torrent) writePiece(piecesCh <-chan *PeerMessage) {
 
 		writeFunc(msg, piecePoss)
 	}
+}
 
-	for _, file := range torrent.OsFiles {
-		file.Sync()
+// Close torrent os files
+func (torrent *Torrent) Close() (err error) {
+	for _, f := range torrent.OsFiles {
+		err = multierr.Append(err, f.Close())
 	}
+	return
 }

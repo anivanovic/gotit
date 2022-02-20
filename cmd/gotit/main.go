@@ -92,11 +92,12 @@ func main() {
 	log.Debug("torrent file", zap.Object("torrentMeta", torrentMeta))
 
 	log.Info("Torrent file parsed")
-	torrent := gotit.NewTorrent(torrentMeta)
+	torrent, err := gotit.NewTorrent(torrentMeta, *downloadFolder)
+	if err != nil {
+		log.Fatal("Error initializing torrent", zap.Error(err))
+	}
+	defer torrent.Close()
 	mng := gotit.NewMng(torrent, *peerNum, *listenPort)
-
-	// TODO: this should be done by TorrentManager
-	createTorrentFiles(torrent)
 
 	go func() {
 		sigs := make(chan os.Signal, 1)
@@ -113,30 +114,4 @@ func main() {
 	}
 
 	log.Info("Download finished")
-}
-
-func createTorrentFiles(torrent *gotit.Torrent) error {
-	path := filepath.Join(*downloadFolder, torrent.Name)
-	var filePaths []string
-	if torrent.IsDirectory {
-		if err := os.Mkdir(path, os.ModeDir); err != nil {
-			return err
-		}
-
-		for _, tf := range torrent.TorrentFiles {
-			filePaths = append(filePaths, filepath.Join(path, tf.Path))
-		}
-	} else {
-		filePaths = append(filePaths, path)
-	}
-
-	for _, path := range filePaths {
-		f, err := os.Create(path)
-		if err != nil {
-			return err
-		}
-		torrent.OsFiles = append(torrent.OsFiles, f)
-	}
-
-	return nil
 }
