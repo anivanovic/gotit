@@ -29,19 +29,16 @@ type TorrentMetadata struct {
 	AnnounceList []string `ben:"announce-list"`
 	UrlList      []string `ben:"url-list"`
 	Info         struct {
-		Files []struct {
-			Length int64  `ben:"length"`
-			Path   string `ben:"path"`
-		} `ben:"files"`
-		Length      int64  `ben:"length"`
-		Name        string `ben:"name"`
-		PieceLength int    `ben:"piece length"`
-		Pieces      string `ben:"pieces"`
+		Files       []TorrentFile `ben:"files"`
+		Length      int64         `ben:"length"`
+		Name        string        `ben:"name"`
+		PieceLength int           `ben:"piece length"`
+		Pieces      string        `ben:"pieces"`
 	} `ben:"info"`
-	InfoDict     bencode.DictElement `ben:"info"`
-	Comment      string              `ben:"comment"`
-	CreatedBy    string              `ben:"created by"`
-	CreationDate int64               `ben:"creation date"`
+	InfoDict     *bencode.DictElement `ben:"info"`
+	Comment      string               `ben:"comment"`
+	CreatedBy    string               `ben:"created by"`
+	CreationDate int64                `ben:"creation date"`
 }
 
 // MarshalLogObject implements zapcore.ObjectMarshaler for logging
@@ -91,8 +88,8 @@ type Torrent struct {
 }
 
 type TorrentFile struct {
-	Path   string
-	Length int
+	Path   []string `ben:"path"`
+	Length int      `ben:"length"`
 }
 
 func NewTorrent(meta *TorrentMetadata, downloadDir string) (*Torrent, error) {
@@ -113,9 +110,9 @@ func NewTorrent(meta *TorrentMetadata, downloadDir string) (*Torrent, error) {
 	torrent.downloaded = bitset.New(uint(torrent.PieceLength))
 	torrent.numOfBlocks = torrent.PieceLength / int(blockLength)
 
-	info := meta.InfoDict.Encode()
+	info := meta.InfoDict.Raw()
 	sha := sha1.New()
-	sha.Write([]byte(info))
+	sha.Write(info)
 	torrent.Hash = sha.Sum(nil)
 
 	trackers := meta.AnnounceList
@@ -133,24 +130,16 @@ func NewTorrent(meta *TorrentMetadata, downloadDir string) (*Torrent, error) {
 
 	if meta.Info.Length != 0 {
 		torrent.IsDirectory = false
-		length := meta.Info.Length
-		torrent.Length = int(length)
+		torrent.Length = int(meta.Info.Length)
 	} else {
 		torrent.IsDirectory = true
 		files := meta.Info.Files
 
-		torrentFiles := make([]TorrentFile, 0)
 		var completeLength int = 0
 		for _, file := range files {
-			torrentFile := TorrentFile{
-				Path:   file.Path,
-				Length: int(file.Length),
-			}
-			completeLength += torrentFile.Length
-
-			torrentFiles = append(torrentFiles, torrentFile)
+			completeLength += file.Length
 		}
-		torrent.TorrentFiles = torrentFiles
+		torrent.TorrentFiles = meta.Info.Files
 		torrent.Length = completeLength
 	}
 
@@ -219,7 +208,7 @@ func (torrent *Torrent) createTorrentFiles(root string) error {
 		}
 
 		for _, tf := range torrent.TorrentFiles {
-			filePaths = append(filePaths, filepath.Join(path, tf.Path))
+			filePaths = append(filePaths, filepath.Join(path, tf.Path[0]))
 		}
 	} else {
 		filePaths = append(filePaths, path)
@@ -252,7 +241,7 @@ func (torrent *Torrent) writePiece(piecesCh <-chan *PeerMessage) {
 					continue
 				} else {
 					log.Debug("Writting to file ",
-						zap.String("file", torFile.Path),
+						zap.String("file", torFile.Path[0]),
 						zap.Int("possition", piecePoss))
 
 					pieceLen := len(msg.Payload[8:])

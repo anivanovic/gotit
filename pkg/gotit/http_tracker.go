@@ -135,8 +135,8 @@ func (t *httpTracker) readPeers(res []byte) ([]string, error) {
 }
 
 func parseBencodePeers(peers bencode.ListElement) []string {
-	ips := make([]string, len(peers))
-	for _, p := range peers {
+	ips := make([]string, len(peers.Value))
+	for _, p := range peers.Value {
 		data, ok := p.(bencode.DictElement)
 		if !ok {
 			continue

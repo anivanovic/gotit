@@ -3,6 +3,7 @@ package command
 import (
 	"fmt"
 	"github.com/anivanovic/gotit/pkg/bencode"
+	"github.com/anivanovic/gotit/pkg/gotit"
 	"github.com/spf13/cobra"
 	"io"
 	"os"
@@ -33,11 +34,10 @@ func run(_ *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	ben, err := bencode.Parse(data)
-	if err != nil {
+	torrent := gotit.TorrentMetadata{}
+	if err := bencode.Unmarshal(data, &torrent); err != nil {
 		fmt.Fprint(os.Stderr, err)
 		os.Exit(1)
 	}
-
-	fmt.Println(ben)
+	fmt.Printf("%+v\n", torrent)
 }

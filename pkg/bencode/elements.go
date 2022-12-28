@@ -8,12 +8,25 @@ type (
 	Bencode interface {
 		String() string
 		Encode() string
+		Raw() []byte
+	}
+
+	DictBencode interface {
+		Bencode
+
+		Value(key string) Bencode
 	}
 
 	IntElement    int
 	StringElement string
-	ListElement   []Bencode
-	DictElement   map[string]Bencode
+	ListElement   struct {
+		Value []Bencode
+		raw   []byte
+	}
+	DictElement struct {
+		value map[string]Bencode
+		raw   []byte
+	}
 )
 
 func (bencode StringElement) String() string {
@@ -24,6 +37,10 @@ func (bencode StringElement) Encode() string {
 	return strconv.Itoa(len(bencode)) + ":" + bencode.String()
 }
 
+func (bencode StringElement) Raw() []byte {
+	return []byte(bencode)
+}
+
 func (bencode IntElement) String() string {
 	return strconv.Itoa(int(bencode))
 }
@@ -32,13 +49,17 @@ func (bencode IntElement) Encode() string {
 	return "i" + bencode.String() + "e"
 }
 
+func (bencode IntElement) Raw() []byte {
+	return []byte(bencode.String())
+}
+
 func (bencode ListElement) String() string {
 	return prettyPrint(bencode, "")
 }
 
 func (bencode ListElement) Encode() string {
 	encoded := "l"
-	for _, el := range bencode {
+	for _, el := range bencode.Value {
 		if el == nil {
 			continue
 		}
@@ -47,13 +68,17 @@ func (bencode ListElement) Encode() string {
 	return encoded + "e"
 }
 
+func (bencode ListElement) Raw() []byte {
+	return bencode.raw
+}
+
 func (bencode DictElement) String() string {
 	return prettyPrint(bencode, "")
 }
 
 func (bencode DictElement) Encode() string {
 	encoded := "d"
-	for k, v := range bencode {
+	for k, v := range bencode.value {
 		if v == nil {
 			continue
 		}
@@ -64,17 +89,21 @@ func (bencode DictElement) Encode() string {
 	return encoded + "e"
 }
 
-func (dict DictElement) Value(key string) Bencode {
-	return dict[key]
+func (bencode DictElement) Value(key string) Bencode {
+	return bencode.value[key]
 }
 
-func prettyPrint(value Bencode, tabs string) string {
-	switch value := value.(type) {
+func (bencode DictElement) Raw() []byte {
+	return bencode.raw
+}
+
+func prettyPrint(bencode Bencode, tabs string) string {
+	switch value := bencode.(type) {
 	case DictElement:
 		tabs = addTab(tabs)
 		data := "{" + newLine(tabs)
 
-		for k, v := range value {
+		for k, v := range value.value {
 			if v == nil {
 				continue
 			}
@@ -89,7 +118,7 @@ func prettyPrint(value Bencode, tabs string) string {
 	case ListElement:
 		tabs = addTab(tabs)
 		data := "[" + newLine(tabs)
-		for _, el := range value {
+		for _, el := range value.Value {
 			if el == nil {
 				continue
 			}

@@ -52,15 +52,11 @@ func processTarget(target interface{}, bencode Bencode) error {
 			continue
 		}
 
-		if f.Kind() == reflect.Ptr {
-			f = f.Elem()
-		}
-
 		name := tag.Get("ben")
 		if name == "" {
 			name = ftype.Name
 		}
-		dict, ok := bencode.(DictElement)
+		dict, ok := bencode.(*DictElement)
 		if !ok {
 			return &TypeError{
 				ElementName: name,
@@ -116,7 +112,7 @@ func setField(f reflect.Value, value Bencode) error {
 		}
 		f.SetFloat(valf)
 	case reflect.Slice:
-		values, ok := value.(ListElement)
+		values, ok := value.(*ListElement)
 		if !ok {
 			return &TypeError{
 				ElementName: "",
@@ -124,9 +120,9 @@ func setField(f reflect.Value, value Bencode) error {
 				BencodeType: reflect.TypeOf(value).String(),
 			}
 		}
-		slice := reflect.MakeSlice(ftype, len(values), len(values))
+		slice := reflect.MakeSlice(ftype, len(values.Value), len(values.Value))
 
-		for i, v := range values {
+		for i, v := range values.Value {
 			listTarget := slice.Index(i)
 			err := setField(listTarget, v)
 			if err != nil {
@@ -138,7 +134,7 @@ func setField(f reflect.Value, value Bencode) error {
 	case reflect.Struct:
 		structPtr := f.Addr().Interface()
 
-		subDict, ok := value.(DictElement)
+		subDict, ok := value.(*DictElement)
 		if !ok {
 			return &TypeError{
 				ElementName: "",
@@ -146,13 +142,20 @@ func setField(f reflect.Value, value Bencode) error {
 				BencodeType: reflect.TypeOf(value).String(),
 			}
 		}
+		vType := reflect.TypeOf(value)
+		if vType.Kind() == reflect.Ptr {
+			vType = vType.Elem()
+		}
+		if f.Type().Name() == vType.Name() {
+			f.Set(reflect.ValueOf(value).Elem())
+		}
 		err := processTarget(structPtr, subDict)
 		if err != nil {
 			return err
 		}
 	case reflect.Map:
 		m := reflect.MakeMap(ftype)
-		values, ok := value.(DictElement)
+		values, ok := value.(*DictElement)
 		if !ok {
 			return &TypeError{
 				ElementName: "",
@@ -161,7 +164,7 @@ func setField(f reflect.Value, value Bencode) error {
 			}
 		}
 
-		for k, v := range values {
+		for k, v := range values.value {
 			m.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v))
 		}
 		f.Set(m)

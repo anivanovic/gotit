@@ -8,6 +8,8 @@ import (
 )
 
 func TestParse(t *testing.T) {
+	var nilDict *DictElement
+	var nilList *ListElement
 	type args struct {
 		data string
 	}
@@ -46,7 +48,10 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "li45902e5:helloe",
 			},
-			want:    ListElement([]Bencode{IntElement(45902), StringElement("hello")}),
+			want: &ListElement{
+				Value: []Bencode{IntElement(45902), StringElement("hello")},
+				raw:   []byte("li45902e5:helloe"),
+			},
 			wantErr: false,
 		},
 		{
@@ -54,9 +59,12 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "d5:helloi45902e5:world2:mee",
 			},
-			want: DictElement(map[string]Bencode{
-				"hello": IntElement(45902),
-				"world": StringElement("me")}),
+			want: &DictElement{
+				value: map[string]Bencode{
+					"hello": IntElement(45902),
+					"world": StringElement("me")},
+				raw: []byte("d5:helloi45902e5:world2:mee"),
+			},
 			wantErr: false,
 		},
 		{
@@ -80,7 +88,7 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "li42ei22e",
 			},
-			want:    ListElement(nil),
+			want:    nilList,
 			wantErr: true,
 		},
 		{
@@ -88,7 +96,7 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "d5:firsti45",
 			},
-			want:    DictElement(nil),
+			want:    nilDict,
 			wantErr: true,
 		},
 		{
@@ -96,7 +104,7 @@ func TestParse(t *testing.T) {
 			args: args{
 				data: "d2:firsti45e",
 			},
-			want:    DictElement(nil),
+			want:    nilDict,
 			wantErr: true,
 		},
 	}

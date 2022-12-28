@@ -139,8 +139,9 @@ func (s *scanner) readString() (string, error) {
 	return strElement, nil
 }
 
-func (s *scanner) readList() (ListElement, error) {
+func (s *scanner) readList() (*ListElement, error) {
 	bencodeList := make([]Bencode, 0)
+	start := s.start
 	s.advance()
 	s.position()
 
@@ -155,12 +156,15 @@ func (s *scanner) readList() (ListElement, error) {
 	if !s.match('e') {
 		return nil, ErrElementEnd
 	}
+	end := s.start
+	raw := s.bencode[start:end]
 
-	return bencodeList, nil
+	return &ListElement{Value: bencodeList, raw: raw}, nil
 }
 
-func (s *scanner) readDict() (DictElement, error) {
+func (s *scanner) readDict() (*DictElement, error) {
 	dict := make(map[string]Bencode)
+	start := s.start
 	s.advance()
 	s.position()
 
@@ -179,8 +183,10 @@ func (s *scanner) readDict() (DictElement, error) {
 	if !s.match('e') {
 		return nil, ErrElementEnd
 	}
+	end := s.start
+	raw := s.bencode[start:end]
 
-	return DictElement(dict), nil
+	return &DictElement{value: dict, raw: raw}, nil
 }
 
 func b2s(b []byte) string {

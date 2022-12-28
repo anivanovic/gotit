@@ -28,16 +28,17 @@ func TestBencode_String(t *testing.T) {
 		},
 		{
 			name:    "List string",
-			bencode: ListElement{IntElement(5), nil},
+			bencode: ListElement{Value: []Bencode{IntElement(5), nil}},
 			want:    "[\n\t5,\n]",
 		},
 		{
 			name: "Dict string",
 			bencode: DictElement{
-				"key":  StringElement("value"),
-				"data": nil,
-			},
-			want: "{\n\tkey: value,\n}",
+				value: map[string]Bencode{
+					"key":  StringElement("Value"),
+					"data": nil,
+				}},
+			want: "{\n\tkey: Value,\n}",
 		},
 	}
 	for _, tt := range tests {
@@ -75,16 +76,17 @@ func TestBencode_Encode(t *testing.T) {
 		},
 		{
 			name:    "List encoded",
-			bencode: ListElement{StringElement("string"), IntElement(1), nil},
+			bencode: ListElement{Value: []Bencode{StringElement("string"), IntElement(1), nil}},
 			want:    "l6:stringi1ee",
 		},
 		{
 			name: "Dict encoded",
 			bencode: DictElement{
-				"key":  StringElement("value"),
-				"list": ListElement{IntElement(12)},
-				"nil":  nil,
-			},
+				value: map[string]Bencode{
+					"key":  StringElement("value"),
+					"list": ListElement{Value: []Bencode{IntElement(12)}},
+					"nil":  nil,
+				}},
 			want: "d3:key5:value4:listli12eee",
 		},
 	}
@@ -103,18 +105,18 @@ func TestPrettyPrint(t *testing.T) {
 	t.Parallel()
 
 	bencode := ListElement{
-		DictElement{
-			"1": StringElement("value"),
-			"2": IntElement(1),
-			"3": ListElement{StringElement("string")},
-			"4": DictElement{},
-		},
-		StringElement("string"),
+		Value: []Bencode{DictElement{
+			value: map[string]Bencode{
+				"1": StringElement("Value"),
+				"2": IntElement(1),
+				"3": ListElement{Value: []Bencode{StringElement("string")}},
+				"4": DictElement{},
+			}},
+			StringElement("string")},
 	}
-	expected :=
-		`[
+	expected := `[
 	{
-		1: value,
+		1: Value,
 		2: 1,
 		3: [
 			string,
@@ -128,5 +130,4 @@ func TestPrettyPrint(t *testing.T) {
 	if got != expected {
 		t.Errorf("Bencode does not print pretty: got = %v, expected = %v", got, expected)
 	}
-
 }

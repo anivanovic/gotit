@@ -20,11 +20,11 @@ func TestTorrent_createTorrentFiles(t *testing.T) {
 	torrent := Torrent{
 		TorrentFiles: []TorrentFile{
 			{
-				Path:   "1.txt",
+				Path:   []string{"1.txt"},
 				Length: 1,
 			},
 			{
-				Path:   "2.txt",
+				Path:   []string{"2.txt"},
 				Length: 2,
 			},
 		},

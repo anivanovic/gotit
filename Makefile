@@ -12,4 +12,7 @@ clean:
 build:
 	go build -ldflags=$(LDFLAGS) -o bin/gotit github.com/anivanovic/gotit/cmd
 
+test:
+	go test --cover ./...
+
 .PHONY: clean run 
