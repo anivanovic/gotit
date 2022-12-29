@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/binary"
+	"fmt"
+	"github.com/anivanovic/gotit/pkg/torrent"
 	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/anivanovic/gotit/pkg/bencode"
@@ -41,6 +44,27 @@ type TorrentMetadata struct {
 	CreationDate int64                `ben:"creation date"`
 }
 
+func (t *Torrent) String() string {
+	pieces := "["
+	for _, piece := range t.Pieces {
+		pieces = fmt.Sprintln(pieces, piece.Index(), ":", piece.String(), ",")
+	}
+	pieces = strings.TrimRight(pieces, ",")
+	pieces = fmt.Sprintln(pieces, "]")
+	return fmt.Sprint(fmt.Sprintln("Torrent {"),
+		fmt.Sprintln("Pieces:", pieces),
+		fmt.Sprintln("Name:", t.Name),
+		fmt.Sprintln("Announce:", t.Metadata.Announce),
+		fmt.Sprintln("Announce list:", t.Metadata.AnnounceList),
+		fmt.Sprintln("Created by:", t.CreatedBy),
+		fmt.Sprintln("Creation date:", t.CreationDate),
+		fmt.Sprintln("Pieces num:", t.PiecesNum),
+		fmt.Sprintln("Pieces len:", t.PieceLength),
+		fmt.Sprintln("Comment:", t.Comment),
+		fmt.Sprintln("Torrent files:", t.TorrentFiles),
+		fmt.Sprint("}"))
+}
+
 // MarshalLogObject implements zapcore.ObjectMarshaler for logging
 func (f *TorrentMetadata) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	if f == nil {
@@ -65,7 +89,7 @@ type Torrent struct {
 	Hash         []byte
 	Length       int
 	PieceLength  int
-	Pieces       []byte
+	Pieces       []torrent.Piece
 	PiecesNum    int
 	TorrentFiles []TorrentFile
 	OsFiles      []*os.File
@@ -93,27 +117,30 @@ type TorrentFile struct {
 }
 
 func NewTorrent(meta *TorrentMetadata, downloadDir string) (*Torrent, error) {
-	torrent := &Torrent{
+	t := &Torrent{
 		requestedMu:  &sync.Mutex{},
 		downloadedMu: &sync.Mutex{},
 		Metadata:     meta,
 	}
-	torrent.PeerId = createClientId()
-	torrent.Name = meta.Info.Name
-	torrent.CreatedBy = meta.CreatedBy
-	torrent.CreationDate = meta.CreationDate
-	torrent.Comment = meta.Comment
-	torrent.PieceLength = meta.Info.PieceLength
-	torrent.Pieces = []byte(meta.Info.Pieces)
-	torrent.PiecesNum = int(math.Ceil(float64(torrent.Length) / float64(torrent.PieceLength)))
-	torrent.requested = bitset.New(uint(torrent.PieceLength))
-	torrent.downloaded = bitset.New(uint(torrent.PieceLength))
-	torrent.numOfBlocks = torrent.PieceLength / int(blockLength)
+	t.PeerId = createClientId()
+	t.Name = meta.Info.Name
+	t.CreatedBy = meta.CreatedBy
+	t.CreationDate = meta.CreationDate
+	t.Comment = meta.Comment
+	t.PieceLength = meta.Info.PieceLength
+	pieces, err := torrent.NewPieces([]byte(meta.Info.Pieces))
+	if err != nil {
+		return nil, err
+	}
+	t.Pieces = pieces
+	t.requested = bitset.New(uint(t.PieceLength))
+	t.downloaded = bitset.New(uint(t.PieceLength))
+	t.numOfBlocks = t.PieceLength / int(blockLength)
 
 	info := meta.InfoDict.Raw()
 	sha := sha1.New()
 	sha.Write(info)
-	torrent.Hash = sha.Sum(nil)
+	t.Hash = sha.Sum(nil)
 
 	trackers := meta.AnnounceList
 	url_list := meta.UrlList
@@ -126,28 +153,29 @@ func NewTorrent(meta *TorrentMetadata, downloadDir string) (*Torrent, error) {
 	for _, el := range url_list {
 		announceSet.Add(el)
 	}
-	torrent.Trackers = announceSet
+	t.Trackers = announceSet
 
 	if meta.Info.Length != 0 {
-		torrent.IsDirectory = false
-		torrent.Length = int(meta.Info.Length)
+		t.IsDirectory = false
+		t.Length = int(meta.Info.Length)
 	} else {
-		torrent.IsDirectory = true
+		t.IsDirectory = true
 		files := meta.Info.Files
 
 		var completeLength int = 0
 		for _, file := range files {
 			completeLength += file.Length
 		}
-		torrent.TorrentFiles = meta.Info.Files
-		torrent.Length = completeLength
+		t.TorrentFiles = meta.Info.Files
+		t.Length = completeLength
 	}
+	t.PiecesNum = int(math.Ceil(float64(t.Length) / float64(t.PieceLength)))
 
-	if err := torrent.createTorrentFiles(downloadDir); err != nil {
+	if err := t.createTorrentFiles(downloadDir); err != nil {
 		return nil, err
 	}
 
-	return torrent, nil
+	return t, nil
 }
 
 func (torrent Torrent) CreateHandshake() []byte {

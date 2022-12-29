@@ -39,5 +39,11 @@ func run(_ *cobra.Command, args []string) {
 		fmt.Fprint(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Printf("%+v\n", torrent)
+
+	torrent2, err := gotit.NewTorrent(&torrent, "")
+	if err != nil {
+		fmt.Fprint(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println(torrent2)
 }
