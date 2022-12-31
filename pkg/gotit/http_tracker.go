@@ -107,7 +107,7 @@ func (t *httpTracker) readPeers(res []byte) ([]string, error) {
 		return nil, err
 	}
 
-	if dict, ok := benc.(bencode.DictElement); ok {
+	if dict, ok := benc.(*bencode.DictElement); ok {
 		failure := dict.Value("failure reason")
 		if failure != nil {
 			return nil, fmt.Errorf("tracker returned failure reason: %s", failure)
@@ -122,7 +122,7 @@ func (t *httpTracker) readPeers(res []byte) ([]string, error) {
 		}
 
 		switch peers := peers.(type) {
-		case bencode.ListElement:
+		case *bencode.ListElement:
 			return parseBencodePeers(peers), nil
 		case bencode.StringElement:
 			return parseCompactPeers(peers), nil
@@ -134,10 +134,10 @@ func (t *httpTracker) readPeers(res []byte) ([]string, error) {
 	return nil, errors.New("tracker: response not bencoded dictionary")
 }
 
-func parseBencodePeers(peers bencode.ListElement) []string {
+func parseBencodePeers(peers *bencode.ListElement) []string {
 	ips := make([]string, len(peers.Value))
 	for _, p := range peers.Value {
-		data, ok := p.(bencode.DictElement)
+		data, ok := p.(*bencode.DictElement)
 		if !ok {
 			continue
 		}
