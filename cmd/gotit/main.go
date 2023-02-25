@@ -1,31 +1,13 @@
 package main
 
 import (
-
-	// _ "net/http/pprof"
-	"os"
-	"path/filepath"
-	"syscall"
-
-	"io/ioutil"
-
-	"flag"
-
-	"os/signal"
-	"os/user"
-
-	"github.com/anivanovic/gotit/pkg/bencode"
-	"github.com/anivanovic/gotit/pkg/gotit"
+	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-)
+	"os"
 
-var (
-	torrentPath    = flag.String("torrent", "", "Path to torrent file")
-	downloadFolder = flag.String("out", "", "Path to download location")
-	listenPort     = flag.Int("port", 8999, "Port used for listening incoming peer requests")
-	logLevel       = flag.String("log-level", "fatal", "Log level for printing messages to console")
-	peerNum        = flag.Int("peer-num", 30, "Number of concurrent peer download connections")
+	"github.com/anivanovic/gotit/pkg/command"
+	"github.com/anivanovic/gotit/pkg/util"
 )
 
 var log *zap.Logger
@@ -33,7 +15,6 @@ var log *zap.Logger
 // set up logger
 func initLogger() {
 	l := zapcore.InfoLevel
-	l.Set(*logLevel)
 
 	cfg := zap.NewProductionConfig()
 	cfg.Encoding = "console"
@@ -43,75 +24,19 @@ func initLogger() {
 	log, _ = cfg.Build()
 
 	zap.ReplaceGlobals(log)
-	gotit.SetLogger(log)
-}
-
-func defaultDownloadFolder() string {
-	user, _ := user.Current()
-
-	defaultDownloadFolder := filepath.Join(user.HomeDir, "Downloads")
-	if _, err := os.Stat(defaultDownloadFolder); os.IsNotExist(err) {
-		return user.HomeDir
-	}
-
-	return defaultDownloadFolder
+	util.SetLogger(log)
 }
 
 func main() {
-	flag.Parse()
-	if *torrentPath == "" {
-		flag.PrintDefaults()
-		os.Exit(2)
-	}
-
 	initLogger()
 	defer log.Sync()
 
-	if _, err := os.Stat(*torrentPath); os.IsNotExist(err) {
-		log.Fatal("Torrent file does not exist", zap.String("path", *torrentPath), zap.Error(err))
-	}
-	if *downloadFolder == "" {
-		*downloadFolder = defaultDownloadFolder()
-	}
-	if _, err := os.Stat(*downloadFolder); os.IsNotExist(err) {
-		log.Fatal("Download folder does not exist", zap.String("path", *downloadFolder), zap.Error(err))
-	}
+	rootCmd := cobra.Command{Use: "gotit"}
+	rootCmd.AddCommand(command.NewCommand())
+	rootCmd.AddCommand(command.NewDownloadCommand())
+	rootCmd.AddCommand(command.NewVersionCommand())
 
-	// go func() {
-	// 	http.ListenAndServe("localhost:6060", nil)
-	// }()
-
-	data, err := ioutil.ReadFile(*torrentPath)
-	if err != nil {
-		log.Fatal("error reading torrent file", zap.String("path", *torrentPath), zap.Error(err))
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
 	}
-	torrentMeta := &gotit.TorrentMetadata{}
-	if err := bencode.Unmarshal(data, torrentMeta); err != nil {
-		log.Fatal("Error parsing torrent file", zap.Error(err))
-	}
-	log.Debug("torrent file", zap.Object("torrentMeta", torrentMeta))
-
-	log.Info("Torrent file parsed")
-	torrent, err := gotit.NewTorrent(torrentMeta, *downloadFolder)
-	if err != nil {
-		log.Fatal("Error initializing torrent", zap.Error(err))
-	}
-	defer torrent.Close()
-	mng := gotit.NewMng(torrent, *peerNum, *listenPort)
-
-	go func() {
-		sigs := make(chan os.Signal, 1)
-		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-		<-sigs
-
-		log.Info("Received signal. Exiting ...")
-		mng.Close()
-	}()
-
-	log.Info("staring download")
-	if err := mng.Download(); err != nil {
-		log.Fatal("Torrent download error", zap.Error(err))
-	}
-
-	log.Info("Download finished")
 }

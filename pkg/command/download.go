@@ -3,14 +3,16 @@ package command
 import (
 	"errors"
 	"fmt"
-	"github.com/anivanovic/gotit/pkg/bencode"
-	"github.com/anivanovic/gotit/pkg/gotit"
 	"github.com/spf13/cobra"
 	"io"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/anivanovic/gotit/pkg/bencode"
+	"github.com/anivanovic/gotit/pkg/download"
+	"github.com/anivanovic/gotit/pkg/torrent"
 )
 
 type flags struct {
@@ -69,16 +71,16 @@ func runDownload(_ *cobra.Command, args []string, f *flags) error {
 		return err
 	}
 
-	var torrentMetadata gotit.TorrentMetadata
+	var torrentMetadata torrent.TorrentMetadata
 	if err := bencode.Unmarshal(data, &torrentMetadata); err != nil {
 		return err
 	}
 
-	torrent, err := gotit.NewTorrent(&torrentMetadata, outDir)
+	torrent, err := torrent.NewTorrent(&torrentMetadata, outDir)
 	if err != nil {
 		return err
 	}
-	mng := gotit.NewMng(torrent, f.peerNum, f.listenPort)
+	mng := download.NewMng(torrent, f.peerNum, f.listenPort)
 	go func() {
 		sigs := make(chan os.Signal, 1)
 		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)

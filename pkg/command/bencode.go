@@ -2,11 +2,12 @@ package command
 
 import (
 	"fmt"
-	"github.com/anivanovic/gotit/pkg/bencode"
-	"github.com/anivanovic/gotit/pkg/gotit"
 	"github.com/spf13/cobra"
 	"io"
 	"os"
+
+	"github.com/anivanovic/gotit/pkg/bencode"
+	"github.com/anivanovic/gotit/pkg/torrent"
 )
 
 func NewCommand() *cobra.Command {
@@ -34,13 +35,13 @@ func run(_ *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	torrent := gotit.TorrentMetadata{}
-	if err := bencode.Unmarshal(data, &torrent); err != nil {
+	torrentMetadata := torrent.TorrentMetadata{}
+	if err := bencode.Unmarshal(data, &torrentMetadata); err != nil {
 		fmt.Fprint(os.Stderr, err)
 		os.Exit(1)
 	}
 
-	torrent2, err := gotit.NewTorrent(&torrent, "")
+	torrent2, err := torrent.NewTorrent(&torrentMetadata, "")
 	if err != nil {
 		fmt.Fprint(os.Stderr, err)
 		os.Exit(1)

@@ -1,10 +1,15 @@
-package gotit
+package peer
 
 import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"net/netip"
 	"time"
+
+	"github.com/anivanovic/gotit/pkg/gotitnet"
+	"github.com/anivanovic/gotit/pkg/torrent"
+	"github.com/anivanovic/gotit/pkg/util"
 
 	"errors"
 
@@ -27,22 +32,25 @@ const (
 	keepalive     = 99
 )
 
+var log = zap.L()
+
 type Peer struct {
 	Id           int
-	Url          string
-	conn         *timeoutConn
-	mng          *torrentManager
-	Torrent      *Torrent
+	AddrPort     netip.AddrPort
+	conn         *gotitnet.TimeoutConn
 	Bitset       *bitset.BitSet
 	PeerStatus   *PeerStatus
 	ClientStatus *PeerStatus
+	torrent      *torrent.Torrent
 	lastMsgSent  time.Time
 	logger       *zap.Logger
+	piecesQueue  *torrent.PiecesQueue
 
 	blockIndx uint
 	pieceIndx uint
 
-	writterCh chan<- *PeerMessage
+	writterCh chan<- *util.PeerMessage
+	doneCh    chan<- struct{}
 }
 
 type PeerStatus struct {
@@ -51,24 +59,22 @@ type PeerStatus struct {
 	Valid      bool
 }
 
-type PeerMessage struct {
-	size    uint32
-	code    uint8
-	Payload []byte
-}
-
-var keepalivePeerMessage = &PeerMessage{
-	size:    0,
-	code:    keepalive,
+var keepalivePeerMessage = &util.PeerMessage{
+	Size:    0,
+	Code:    keepalive,
 	Payload: nil,
 }
 
-func NewPeerMessage(data []byte) *PeerMessage {
+func NewPeerMessage(data []byte) *util.PeerMessage {
 	if len(data) == 0 { // keepalive message
 		return keepalivePeerMessage
 	}
 
-	return &PeerMessage{size: uint32(len(data)), code: data[0], Payload: data[1:]}
+	return &util.PeerMessage{
+		Size:    uint32(len(data)),
+		Code:    data[0],
+		Payload: data[1:],
+	}
 }
 
 func createNotInterestedMessage() []byte {
@@ -139,25 +145,25 @@ func checkHandshake(handshake, hash, peerId []byte) bool {
 		zap.Binary("peerId", sentPeerId))
 
 	return ressCode != 19 ||
-		protocolSignature != string(bittorentProto[:]) ||
+		protocolSignature != string(torrent.BittorrentProto[:]) ||
 		reservedBytes != 0 ||
 		!bytes.Equal(sentHash, hash) ||
 		!bytes.Equal(sentPeerId, peerId)
 }
 
 func (peer *Peer) createPieceMessage() []byte {
-	beginOffset := peer.blockIndx * blockLength
+	beginOffset := peer.blockIndx * torrent.BlockLength
 	message := &bytes.Buffer{}
 	binary.Write(message, binary.BigEndian, uint32(13))
 	binary.Write(message, binary.BigEndian, uint8(request))
 	binary.Write(message, binary.BigEndian, uint32(peer.pieceIndx))
 	binary.Write(message, binary.BigEndian, uint32(beginOffset))
-	binary.Write(message, binary.BigEndian, uint32(blockLength))
+	binary.Write(message, binary.BigEndian, uint32(torrent.BlockLength))
 
 	peer.logger.Info("created piece request",
 		zap.Uint("piece", peer.pieceIndx),
 		zap.Uint("offset", beginOffset),
-		zap.Uint("length", blockLength),
+		zap.Uint("length", torrent.BlockLength),
 	)
 
 	peer.blockIndx++
@@ -169,42 +175,49 @@ func newPeerStatus() *PeerStatus {
 	return &PeerStatus{true, false, true}
 }
 
-func NewPeer(ip string, mng *torrentManager, writterCh chan<- *PeerMessage) *Peer {
+func NewPeer(
+	ip netip.AddrPort,
+	torrent *torrent.Torrent,
+	piecesQueue *torrent.PiecesQueue,
+	writterCh chan<- *util.PeerMessage,
+	doneCh chan<- struct{},
+) *Peer {
 	return &Peer{
 		Id:           rand.Int(),
-		Url:          ip,
+		AddrPort:     ip,
 		conn:         nil,
-		mng:          mng,
-		Torrent:      mng.torrent,
 		PeerStatus:   newPeerStatus(),
 		ClientStatus: newPeerStatus(),
+		torrent:      torrent,
 		lastMsgSent:  time.Now(),
-		logger:       log.With(zap.String("ip", ip)),
+		logger:       log.With(zap.String("ip", ip.String())),
 		blockIndx:    uint(0),
+		piecesQueue:  piecesQueue,
 		writterCh:    writterCh,
+		doneCh:       doneCh,
 	}
 }
 
 func (peer *Peer) connect() error {
 	var err error
 	peer.lastMsgSent = time.Now()
-	peer.conn, err = NewTimeoutConn("tcp", peer.Url, peerTimeout)
+	peer.conn, err = gotitnet.NewTimeoutConn("tcp", peer.AddrPort.String(), gotitnet.PeerTimeout)
 	return err
 }
 
-func (peer *Peer) Announce() error {
+func (peer *Peer) Announce(ctx context.Context, torrent *torrent.Torrent) error {
 	err := peer.connect()
 	if err != nil {
 		return err
 	}
 
-	peer.sendMessage(peer.Torrent.CreateHandshake())
-	response, err := peer.conn.ReadPeerHandshake(context.TODO())
+	peer.sendMessage(torrent.CreateHandshake())
+	response, err := peer.conn.ReadPeerHandshake(ctx)
 	if err != nil {
 		return err
 	}
 
-	if valid := checkHandshake(response, peer.Torrent.Hash, peer.Torrent.PeerId); !valid {
+	if valid := checkHandshake(response, torrent.Hash, torrent.PeerId); !valid {
 		return errors.New("peer handshake invalid")
 	}
 
@@ -213,7 +226,6 @@ func (peer *Peer) Announce() error {
 }
 
 // Run communicates with remote peer and downloads torrent pieces.
-
 func (peer *Peer) Run(ctx context.Context) {
 	var requestMsg []byte
 	sentPieceMsg := false
@@ -240,11 +252,11 @@ func (peer *Peer) Run(ctx context.Context) {
 
 		if !peer.PeerStatus.Choking && !sentPieceMsg {
 			if requestMsg == nil {
-				requestMsg = peer.nextRequestMessage()
+				requestMsg = peer.nextRequestMessage(peer.torrent)
 			}
 
-			if requestMsg == nil && peer.mng.torrent.Done() {
-				peer.mng.setDone()
+			if requestMsg == nil && peer.torrent.Done() {
+				peer.doneCh <- struct{}{}
 				return
 			}
 
@@ -270,7 +282,7 @@ func (peer *Peer) Run(ctx context.Context) {
 		response, err := peer.conn.ReadPeerMessage(ctx)
 		if err != nil {
 			if sentPieceMsg {
-				peer.mng.RequestFailed(requestMsg)
+				peer.piecesQueue.RequestFailed(requestMsg)
 			}
 			return
 		}
@@ -279,19 +291,19 @@ func (peer *Peer) Run(ctx context.Context) {
 			sentPieceMsg = false
 		}
 
-		peer.handlePeerMesssage(NewPeerMessage(response))
+		peer.handlePeerMessage(NewPeerMessage(response))
 	}
 }
 
-func (peer *Peer) nextRequestMessage() []byte {
-	if peer.blockIndx >= uint(peer.Torrent.numOfBlocks) {
+func (peer *Peer) nextRequestMessage(torrent *torrent.Torrent) []byte {
+	if peer.blockIndx >= uint(torrent.BlockNum()) {
 		// when finished with piece download check if we have failed
 		// piece requests
-		if req := peer.mng.FailedPieceMessage(); req != nil {
+		if req := peer.piecesQueue.FailedPieceMessage(); req != nil {
 			return req
 		}
 
-		indx, found := peer.mng.NextPieceRequest(peer.Bitset)
+		indx, found := torrent.CreateNextRequestMessage(peer.Bitset)
 		if !found {
 			// we do not have any piece to request from the peer
 			return nil
@@ -316,14 +328,14 @@ func (peer *Peer) updateLastMsgSent() {
 	peer.lastMsgSent = time.Now()
 }
 
-func (peer *Peer) handlePeerMesssage(message *PeerMessage) {
+func (peer *Peer) handlePeerMessage(message *util.PeerMessage) {
 	// if keepalive wait 2 minutes and try again
-	if message.size == 0 {
+	if message.Size == 0 {
 		peer.logger.Debug("Peer sent keepalive")
 		return
 	}
 
-	switch message.code {
+	switch message.Code {
 	case bitfield:
 		peer.logger.Info("Peer sent bitfield message")
 		peer.Bitset = createBitset(message.Payload)
@@ -350,12 +362,12 @@ func (peer *Peer) handlePeerMesssage(message *PeerMessage) {
 		peer.logger.Debug("Peer sent request message")
 	case piece:
 		peer.logger.Debug("Peer sent piece message")
-		peer.mng.UpdateStatus(uint64(blockLength), 0)
+		//peer.mng.UpdateStatus(uint64(torrent.BlockLength), 0)
 		peer.writterCh <- message
 	case cancel:
 		peer.logger.Debug("Peer sent cancle message")
 	default:
-		peer.logger.Sugar().Debugf("Peer sent wrong code %d", message.code)
+		peer.logger.Sugar().Debugf("Peer sent wrong code %d", message.Code)
 	}
 }
 

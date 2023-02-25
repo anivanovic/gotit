@@ -1,11 +1,11 @@
-package gotit
+package torrent
 
 import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
-	"github.com/anivanovic/gotit/pkg/torrent"
+	"github.com/tevino/abool/v2"
 	"math"
 	"math/rand"
 	"os"
@@ -13,18 +13,22 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/anivanovic/gotit/pkg/bencode"
 	"github.com/bits-and-blooms/bitset"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/anivanovic/gotit/pkg/bencode"
+	"github.com/anivanovic/gotit/pkg/util"
 )
 
-const blockLength uint = 64 * 1024
+const BlockLength uint = 64 * 1024
+
+var log = zap.L()
 
 var (
-	bittorentProto = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
-	clientIdPrefix = [8]byte{'-', 'G', 'O', '0', '1', '0', '0', '-'}
+	BittorrentProto = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
+	clientIdPrefix  = [8]byte{'-', 'G', 'O', '0', '1', '0', '0', '-'}
 )
 
 type TorrentMetadata struct {
@@ -44,24 +48,24 @@ type TorrentMetadata struct {
 	CreationDate int64                `ben:"creation date"`
 }
 
-func (t *Torrent) String() string {
+func (torrent *Torrent) String() string {
 	pieces := "["
-	for _, piece := range t.Pieces {
+	for _, piece := range torrent.Pieces {
 		pieces = fmt.Sprintln(pieces, piece.Index(), ":", piece.String(), ",")
 	}
 	pieces = strings.TrimRight(pieces, ",")
 	pieces = fmt.Sprintln(pieces, "]")
 	return fmt.Sprint(fmt.Sprintln("Torrent {"),
 		fmt.Sprintln("Pieces:", pieces),
-		fmt.Sprintln("Name:", t.Name),
-		fmt.Sprintln("Announce:", t.Metadata.Announce),
-		fmt.Sprintln("Announce list:", t.Metadata.AnnounceList),
-		fmt.Sprintln("Created by:", t.CreatedBy),
-		fmt.Sprintln("Creation date:", t.CreationDate),
-		fmt.Sprintln("Pieces num:", t.PiecesNum),
-		fmt.Sprintln("Pieces len:", t.PieceLength),
-		fmt.Sprintln("Comment:", t.Comment),
-		fmt.Sprintln("Torrent files:", t.TorrentFiles),
+		fmt.Sprintln("Name:", torrent.Name),
+		fmt.Sprintln("Announce:", torrent.Metadata.Announce),
+		fmt.Sprintln("Announce list:", torrent.Metadata.AnnounceList),
+		fmt.Sprintln("Created by:", torrent.CreatedBy),
+		fmt.Sprintln("Creation date:", torrent.CreationDate),
+		fmt.Sprintln("Pieces num:", torrent.PiecesNum),
+		fmt.Sprintln("Pieces len:", torrent.PieceLength),
+		fmt.Sprintln("Comment:", torrent.Comment),
+		fmt.Sprintln("Torrent files:", torrent.TorrentFiles),
 		fmt.Sprint("}"))
 }
 
@@ -85,11 +89,11 @@ func (f *TorrentMetadata) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 }
 
 type Torrent struct {
-	Trackers     StringSet
+	Trackers     util.StringSet
 	Hash         []byte
 	Length       int
 	PieceLength  int
-	Pieces       []torrent.Piece
+	Pieces       []Piece
 	PiecesNum    int
 	TorrentFiles []TorrentFile
 	OsFiles      []*os.File
@@ -109,6 +113,9 @@ type Torrent struct {
 
 	downloaded   *bitset.BitSet
 	downloadedMu *sync.Mutex
+
+	done   *abool.AtomicBool
+	doneCh chan struct{}
 }
 
 type TorrentFile struct {
@@ -128,14 +135,14 @@ func NewTorrent(meta *TorrentMetadata, downloadDir string) (*Torrent, error) {
 	t.CreationDate = meta.CreationDate
 	t.Comment = meta.Comment
 	t.PieceLength = meta.Info.PieceLength
-	pieces, err := torrent.NewPieces([]byte(meta.Info.Pieces))
+	pieces, err := NewPieces([]byte(meta.Info.Pieces))
 	if err != nil {
 		return nil, err
 	}
 	t.Pieces = pieces
 	t.requested = bitset.New(uint(t.PieceLength))
 	t.downloaded = bitset.New(uint(t.PieceLength))
-	t.numOfBlocks = t.PieceLength / int(blockLength)
+	t.numOfBlocks = t.PieceLength / int(BlockLength)
 
 	info := meta.InfoDict.Raw()
 	sha := sha1.New()
@@ -145,7 +152,7 @@ func NewTorrent(meta *TorrentMetadata, downloadDir string) (*Torrent, error) {
 	trackers := meta.AnnounceList
 	url_list := meta.UrlList
 	announce := meta.Announce
-	announceSet := NewStringSet()
+	announceSet := util.NewStringSet()
 	announceSet.Add(announce)
 	for _, el := range trackers {
 		announceSet.Add(el)
@@ -181,8 +188,8 @@ func NewTorrent(meta *TorrentMetadata, downloadDir string) (*Torrent, error) {
 func (torrent Torrent) CreateHandshake() []byte {
 	request := new(bytes.Buffer)
 	// 19 - as number of letters in protocol type string
-	binary.Write(request, binary.BigEndian, uint8(len(bittorentProto)))
-	binary.Write(request, binary.BigEndian, bittorentProto)
+	binary.Write(request, binary.BigEndian, uint8(len(BittorrentProto)))
+	binary.Write(request, binary.BigEndian, BittorrentProto)
 	binary.Write(request, binary.BigEndian, uint64(0))
 	binary.Write(request, binary.BigEndian, torrent.Hash)
 	binary.Write(request, binary.BigEndian, torrent.PeerId)
@@ -253,14 +260,14 @@ func (torrent *Torrent) createTorrentFiles(root string) error {
 	return nil
 }
 
-func (torrent *Torrent) writePiece(piecesCh <-chan *PeerMessage) {
-	writeFunc := func(msg *PeerMessage, piecePoss int) {
+func (torrent *Torrent) WritePiece(piecesCh <-chan *util.PeerMessage) {
+	writeFunc := func(msg *util.PeerMessage, piecePoss int) {
 		file := torrent.OsFiles[0]
 		file.WriteAt(msg.Payload[8:], int64(piecePoss))
 	}
 
 	if torrent.IsDirectory {
-		writeFunc = func(msg *PeerMessage, piecePoss int) {
+		writeFunc = func(msg *util.PeerMessage, piecePoss int) {
 
 			torFiles := torrent.TorrentFiles
 			for indx, torFile := range torFiles {
@@ -295,12 +302,16 @@ func (torrent *Torrent) writePiece(piecesCh <-chan *PeerMessage) {
 		offset := binary.BigEndian.Uint32(msg.Payload[4:8])
 		piecePoss := int(indx)*torrent.PieceLength + int(offset)
 
-		if (int(offset) + int(blockLength)) == torrent.PieceLength {
+		if (int(offset) + int(BlockLength)) == torrent.PieceLength {
 			torrent.SetDownloaded(uint(indx))
 		}
 
 		writeFunc(msg, piecePoss)
 	}
+}
+
+func (torrent *Torrent) BlockNum() int {
+	return torrent.numOfBlocks
 }
 
 // Close torrent os files

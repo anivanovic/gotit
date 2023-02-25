@@ -1,4 +1,4 @@
-package gotit
+package torrent
 
 import (
 	"os"

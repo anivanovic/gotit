@@ -1,19 +1,24 @@
-package gotit
+package tracker
 
 import (
 	"context"
 	"encoding/binary"
 	"fmt"
 	"math/rand"
+	"net/netip"
 	"net/url"
 	"time"
+
+	"github.com/anivanovic/gotit/pkg/gotitnet"
+	"github.com/anivanovic/gotit/pkg/torrent"
 
 	"bytes"
 
 	"errors"
 
-	"github.com/anivanovic/gotit/pkg/bencode"
 	"go.uber.org/zap"
+
+	"github.com/anivanovic/gotit/pkg/bencode"
 )
 
 const protocolId uint64 = 0x41727101980
@@ -21,7 +26,7 @@ const protocolId uint64 = 0x41727101980
 const (
 	connect = iota
 	announce
-	con_error
+	conError
 )
 
 const (
@@ -33,8 +38,9 @@ const (
 
 // BEP15
 type udpTracker struct {
-	conn *timeoutConn
-	ips  []string
+	conn *gotitnet.TimeoutConn
+	ips  []netip.AddrPort
+	url  string
 
 	connectionId  uint64
 	transactionId uint32
@@ -43,31 +49,36 @@ type udpTracker struct {
 }
 
 func newUdpTracker(url *url.URL) (Tracker, error) {
-	conn, err := NewTimeoutConn(url.Scheme, url.Host, trackerTimeout)
+	conn, err := gotitnet.NewTimeoutConn(url.Scheme, url.Host, gotitnet.TrackerTimeout)
 	if err != nil {
 		return nil, err
 	}
 
-	tracker := udpTracker{conn, nil, 0, 0, waitInterval{time.Minute}}
+	tracker := udpTracker{
+		conn:         conn,
+		waitInterval: waitInterval{time.Minute},
+		url:          url.String(),
+	}
 	return &tracker, nil
 }
 
 func (t udpTracker) Url() string {
-	return t.conn.c.RemoteAddr().String()
+	return t.url
 }
 
 func (t *udpTracker) Close() error {
-	return t.conn.c.Close()
+	return t.conn.Close()
 }
 
-func (t *udpTracker) Announce(ctx context.Context, mng *torrentManager) ([]string, error) {
+func (t *udpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, data *AnnounceData) ([]netip.AddrPort, error) {
 	connId, err := t.handshake(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	transactionId := createTransactionId()
-	request := createAnnounce(connId, transactionId, mng)
+	// TODO propagate download stats
+	request := createAnnounce(connId, transactionId, torrent, data)
 	t.conn.Write(ctx, request)
 	log.Info("Announce sent to tracker", zap.String("ip", t.Url()))
 	response, err := t.conn.ReadAll(context.TODO())
@@ -112,28 +123,28 @@ func (t *udpTracker) readTrackerResponse(response []byte, transactionId uint32) 
 	case announce:
 		t.ips, err = t.readAnnounce(response, transactionId)
 		return err
-	case con_error:
+	case conError:
 		return readError(response, transactionId)
 	default:
 		return fmt.Errorf("unrecognized udp tracker response action code: %d", actionCode)
 	}
 }
 
-func createAnnounce(connId uint64, transactionId uint32, mng *torrentManager) []byte {
+func createAnnounce(connId uint64, transactionId uint32, torrent *torrent.Torrent, data *AnnounceData) []byte {
 	request := &bytes.Buffer{}
 	binary.Write(request, binary.BigEndian, connId)
 	binary.Write(request, binary.BigEndian, uint32(announce))
 	binary.Write(request, binary.BigEndian, transactionId)
-	binary.Write(request, binary.BigEndian, mng.torrent.Hash)
-	binary.Write(request, binary.BigEndian, mng.torrent.PeerId)
-	binary.Write(request, binary.BigEndian, uint64(mng.torrentStatus.Download()))
-	binary.Write(request, binary.BigEndian, uint64(mng.torrentStatus.Left()))
-	binary.Write(request, binary.BigEndian, uint64(mng.torrentStatus.Upload()))
+	binary.Write(request, binary.BigEndian, torrent.Hash)
+	binary.Write(request, binary.BigEndian, torrent.PeerId)
+	binary.Write(request, binary.BigEndian, uint64(data.Downloaded))
+	binary.Write(request, binary.BigEndian, uint64(data.Left))
+	binary.Write(request, binary.BigEndian, uint64(data.Uploaded))
 	binary.Write(request, binary.BigEndian, uint32(none))
 	binary.Write(request, binary.BigEndian, uint32(0))
 	binary.Write(request, binary.BigEndian, rand.Int31())
 	binary.Write(request, binary.BigEndian, int32(-1))
-	binary.Write(request, binary.BigEndian, int32(mng.listenPort))
+	binary.Write(request, binary.BigEndian, int32(data.Port))
 	return request.Bytes()
 }
 
@@ -153,7 +164,7 @@ func readConnect(data []byte, transactionId uint32) (uint64, error) {
 	return conId, nil
 }
 
-func (t *udpTracker) readAnnounce(response []byte, transactionId uint32) ([]string, error) {
+func (t *udpTracker) readAnnounce(response []byte, transactionId uint32) ([]netip.AddrPort, error) {
 	if len(response) < 20 {
 		return nil, errors.New("udp announce respons size less then 20")
 	}
@@ -162,14 +173,14 @@ func (t *udpTracker) readAnnounce(response []byte, transactionId uint32) ([]stri
 	}
 
 	t.interval = time.Duration(binary.BigEndian.Uint32(response[8:12])) * time.Second
-	leachers := binary.BigEndian.Uint32(response[12:16])
-	seaders := binary.BigEndian.Uint32(response[16:20])
+	leechers := binary.BigEndian.Uint32(response[12:16])
+	seeders := binary.BigEndian.Uint32(response[16:20])
 
 	log.Info("CreateTracker message",
 		zap.Int("resCode", announce),
 		zap.Duration("interval", t.interval),
-		zap.Uint32("leachers", leachers),
-		zap.Uint32("seaders", seaders))
+		zap.Uint32("leechers", leechers),
+		zap.Uint32("seeders", seeders))
 	return parseCompactPeers(bencode.StringElement(response[20:])), nil
 }
 

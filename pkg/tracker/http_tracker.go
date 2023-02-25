@@ -1,13 +1,15 @@
-package gotit
+package tracker
 
 import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"time"
+
+	"github.com/anivanovic/gotit/pkg/torrent"
 
 	"strconv"
 
@@ -15,9 +17,10 @@ import (
 
 	"errors"
 
-	"github.com/anivanovic/gotit/pkg/bencode"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/anivanovic/gotit/pkg/bencode"
 )
 
 type tEvent string
@@ -27,6 +30,8 @@ const (
 	stoppedEvent   tEvent = "stopped"
 	completedEvent tEvent = "completed"
 )
+
+var log = zap.L()
 
 type httpTracker struct {
 	url       *url.URL
@@ -55,8 +60,8 @@ func (t httpTracker) Url() string {
 
 func (t *httpTracker) Close() error { return nil }
 
-func (t *httpTracker) Announce(ctx context.Context, mng *torrentManager) ([]string, error) {
-	t.buildQuer(mng)
+func (t *httpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, data *AnnounceData) ([]netip.AddrPort, error) {
+	t.buildQuer(torrent, data)
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, t.Url(), nil)
 	if err != nil {
 		return nil, err
@@ -85,14 +90,14 @@ func (t *httpTracker) Announce(ctx context.Context, mng *torrentManager) ([]stri
 	return t.readPeers(body)
 }
 
-func (t *httpTracker) buildQuer(mng *torrentManager) {
+func (t *httpTracker) buildQuer(torrent *torrent.Torrent, data *AnnounceData) {
 	query := t.url.Query()
-	query.Set("info_hash", string(mng.torrent.Hash))
-	query.Set("peer_id", string(mng.torrent.PeerId))
-	query.Set("port", strconv.Itoa(mng.listenPort))
-	query.Set("downloaded", strconv.FormatUint(mng.torrentStatus.Download(), 10))
-	query.Set("uploaded", strconv.FormatUint(mng.torrentStatus.Upload(), 10))
-	query.Set("left", strconv.FormatUint(mng.torrentStatus.Left(), 10))
+	query.Set("info_hash", string(torrent.Hash))
+	query.Set("peer_id", string(torrent.PeerId))
+	query.Set("port", strconv.Itoa(data.Port))
+	query.Set("downloaded", strconv.FormatUint(data.Downloaded, 10))
+	query.Set("uploaded", strconv.FormatUint(data.Uploaded, 10))
+	query.Set("left", strconv.FormatUint(data.Left, 10))
 	query.Set("numwant", "50")
 	query.Set("event", string(t.event))
 	query.Set("trackerid", t.trackerId)
@@ -101,7 +106,7 @@ func (t *httpTracker) buildQuer(mng *torrentManager) {
 	t.url.RawQuery = query.Encode()
 }
 
-func (t *httpTracker) readPeers(res []byte) ([]string, error) {
+func (t *httpTracker) readPeers(res []byte) ([]netip.AddrPort, error) {
 	benc, err := bencode.Parse(res)
 	if err != nil {
 		return nil, err
@@ -134,8 +139,8 @@ func (t *httpTracker) readPeers(res []byte) ([]string, error) {
 	return nil, errors.New("tracker: response not bencoded dictionary")
 }
 
-func parseBencodePeers(peers *bencode.ListElement) []string {
-	ips := make([]string, len(peers.Value))
+func parseBencodePeers(peers *bencode.ListElement) []netip.AddrPort {
+	ips := make([]netip.AddrPort, len(peers.Value))
 	for _, p := range peers.Value {
 		data, ok := p.(*bencode.DictElement)
 		if !ok {
@@ -144,26 +149,38 @@ func parseBencodePeers(peers *bencode.ListElement) []string {
 
 		ip := data.Value("ip").String()
 		port := data.Value("port").String()
-		ipAddr := ip + ":" + port
-		ips = append(ips, ipAddr)
+		addr, err := netip.ParseAddr(ip)
+		if err != nil {
+			log.Error("invalid ip address", zap.Error(err), zap.String("ip", ip))
+			continue
+		}
+		portNumber, err := strconv.Atoi(port)
+		if err != nil {
+			log.Error("port not number", zap.String("port", port))
+			continue
+		}
+		parseIP := addr
+		addrPort := netip.AddrPortFrom(parseIP, uint16(portNumber))
+		ips = append(ips, addrPort)
 	}
 	return ips
 }
 
-func parseCompactPeers(peers bencode.StringElement) []string {
+func parseCompactPeers(peers bencode.StringElement) []netip.AddrPort {
 	ipData := []byte(peers)
 	peerCount := len(ipData) / 6
 
-	byteMask, ips := 6, make([]string, peerCount)
+	byteMask, ips := 6, make([]netip.AddrPort, peerCount)
 	for read := 0; read < peerCount; read++ {
-		ipAddress := net.IPv4(
-			ipData[byteMask*read],
-			ipData[byteMask*read+1],
-			ipData[byteMask*read+2],
-			ipData[byteMask*read+3])
+		var ip [4]byte
+		ip[0] = ipData[(byteMask * read)]
+		ip[1] = ipData[(byteMask*read + 1)]
+		ip[2] = ipData[(byteMask*read + 2)]
+		ip[3] = ipData[(byteMask*read + 3)]
+		addr := netip.AddrFrom4(ip)
 		port := binary.BigEndian.Uint16(ipData[byteMask*read+4 : byteMask*read+6])
-		ipAddr := ipAddress.String() + ":" + strconv.Itoa(int(port))
-		ips = append(ips, ipAddr)
+		addrPort := netip.AddrPortFrom(addr, port)
+		ips = append(ips, addrPort)
 	}
 	return ips
 }

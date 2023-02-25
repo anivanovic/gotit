@@ -1,15 +1,13 @@
-package gotit
+package download
 
 import (
 	"sync/atomic"
 	"time"
 )
 
-const (
-	mb = 1 << 20
-)
+const mb = 1 << 20
 
-type torrentStatus struct {
+type Stats struct {
 	start time.Time
 
 	download uint64
@@ -17,28 +15,28 @@ type torrentStatus struct {
 	left     uint64
 }
 
-func (ts *torrentStatus) AddDownload(size uint64) {
+func (ts *Stats) AddDownload(size uint64) {
 	atomic.AddUint64(&ts.download, size)
 	atomic.AddUint64(&ts.left, -size)
 }
 
-func (ts *torrentStatus) AddUpload(size uint64) {
+func (ts *Stats) AddUpload(size uint64) {
 	atomic.AddUint64(&ts.upload, size)
 }
 
-func (ts *torrentStatus) Download() uint64 {
+func (ts *Stats) Download() uint64 {
 	return atomic.LoadUint64(&ts.download)
 }
 
-func (ts *torrentStatus) Upload() uint64 {
+func (ts *Stats) Upload() uint64 {
 	return atomic.LoadUint64(&ts.upload)
 }
 
-func (ts *torrentStatus) Left() uint64 {
+func (ts *Stats) Left() uint64 {
 	return atomic.LoadUint64(&ts.left)
 }
 
-func (ts torrentStatus) Speed() float64 {
+func (ts Stats) Speed() float64 {
 	dur := time.Since(ts.start)
 	return float64(ts.Download()) / dur.Seconds() / mb
 }

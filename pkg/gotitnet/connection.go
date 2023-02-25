@@ -1,4 +1,4 @@
-package gotit
+package gotitnet
 
 import (
 	"context"
@@ -9,12 +9,12 @@ import (
 )
 
 const (
-	peerTimeout    = time.Second * 3
-	trackerTimeout = time.Second * 5
-	dialTimeout    = time.Second * 5
+	PeerTimeout    = time.Second * 3
+	TrackerTimeout = time.Second * 5
+	DialTimeout    = time.Second * 5
 )
 
-type timeoutConn struct {
+type TimeoutConn struct {
 	// Underlaying TCP/UDP connection.
 	c net.Conn
 	// Timeout used when readin or writing on
@@ -22,13 +22,13 @@ type timeoutConn struct {
 	timeout time.Duration
 }
 
-func NewTimeoutConn(network, address string, timeout time.Duration) (*timeoutConn, error) {
-	conn, err := net.DialTimeout(network, address, dialTimeout)
+func NewTimeoutConn(network, address string, timeout time.Duration) (*TimeoutConn, error) {
+	conn, err := net.DialTimeout(network, address, DialTimeout)
 	if err != nil {
 		return nil, err
 	}
 
-	return &timeoutConn{
+	return &TimeoutConn{
 			c:       conn,
 			timeout: timeout,
 		},
@@ -37,7 +37,7 @@ func NewTimeoutConn(network, address string, timeout time.Duration) (*timeoutCon
 
 // ReadPeerMessage reads whole peer message from socket.
 // Read deadline is set to timeoutConn.timeout
-func (c *timeoutConn) ReadPeerMessage(ctx context.Context) ([]byte, error) {
+func (c *TimeoutConn) ReadPeerMessage(ctx context.Context) ([]byte, error) {
 	size, err := c.readPeerMessageSize(ctx)
 	if err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func (c *timeoutConn) ReadPeerMessage(ctx context.Context) ([]byte, error) {
 
 // readPeerMessageSize returns next peer message size by reading first 4
 // bytes from socket.
-func (c *timeoutConn) readPeerMessageSize(ctx context.Context) (int, error) {
+func (c *TimeoutConn) readPeerMessageSize(ctx context.Context) (int, error) {
 	buf, err := c.readExactly(ctx, 4)
 	if err != nil {
 		return 0, err
@@ -59,31 +59,35 @@ func (c *timeoutConn) readPeerMessageSize(ctx context.Context) (int, error) {
 
 // ReadPeerHandshake reads peer handshake message from socket.
 // Read deadline is set to timeoutConn.timeout
-func (c *timeoutConn) ReadPeerHandshake(ctx context.Context) ([]byte, error) {
+func (c *TimeoutConn) ReadPeerHandshake(ctx context.Context) ([]byte, error) {
 	return c.readExactly(ctx, 68)
 }
 
 // Write writes data to socket.
 // Write deadline is set to timeoutConn.timeout
-func (c *timeoutConn) Write(ctx context.Context, data []byte) (int, error) {
+func (c *TimeoutConn) Write(ctx context.Context, data []byte) (int, error) {
 	c.setWriteDeadline()
 	return c.c.Write(data)
 }
 
 // ReadAll reads from socket until error is thrown or EOF.
 // Read deadline is set to timeoutConn.timeout
-func (c *timeoutConn) ReadAll(ctx context.Context) ([]byte, error) {
+func (c *TimeoutConn) ReadAll(ctx context.Context) ([]byte, error) {
 	c.setReadDeadline()
 	return io.ReadAll(c.c)
 }
 
 // ReadUdpHandshake reads udp tracker handshake from socket.
 // Read deadline is set to timeoutConn.timeout
-func (c *timeoutConn) ReadUdpHandshake(ctx context.Context) ([]byte, error) {
+func (c *TimeoutConn) ReadUdpHandshake(ctx context.Context) ([]byte, error) {
 	return c.readExactly(ctx, 16)
 }
 
-func (c *timeoutConn) readExactly(ctx context.Context, len int) ([]byte, error) {
+func (c *TimeoutConn) Close() error {
+	return c.c.Close()
+}
+
+func (c *TimeoutConn) readExactly(ctx context.Context, len int) ([]byte, error) {
 	buf := make([]byte, len)
 	c.setReadDeadline()
 	if _, err := io.ReadFull(c.c, buf); err != nil {
@@ -93,10 +97,10 @@ func (c *timeoutConn) readExactly(ctx context.Context, len int) ([]byte, error) 
 	return buf, nil
 }
 
-func (c *timeoutConn) setReadDeadline() {
+func (c *TimeoutConn) setReadDeadline() {
 	c.c.SetReadDeadline(time.Now().Add(c.timeout))
 }
 
-func (c *timeoutConn) setWriteDeadline() {
+func (c *TimeoutConn) setWriteDeadline() {
 	c.c.SetWriteDeadline(time.Now().Add(c.timeout))
 }

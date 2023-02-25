@@ -1,4 +1,4 @@
-package gotit
+package util
 
 import (
 	"go.uber.org/zap"

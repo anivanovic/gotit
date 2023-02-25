@@ -1,4 +1,4 @@
-package gotit
+package tracker
 
 import (
 	"testing"
