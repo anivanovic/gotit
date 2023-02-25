@@ -1,9 +1,8 @@
-package tracker
+package tracker_test
 
 import (
+	"github.com/anivanovic/gotit/pkg/tracker"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestNewTracker(t *testing.T) {
@@ -13,7 +12,6 @@ func TestNewTracker(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    args
-		want    Tracker
 		wantErr bool
 	}{
 		{
@@ -21,21 +19,18 @@ func TestNewTracker(t *testing.T) {
 			args: args{
 				urlString: "http://www.announcer.com:8090/annunce",
 			},
-			want: &httpTracker{},
 		},
 		{
 			name: "udp tracker",
 			args: args{
 				urlString: "udp://tracker.leechers-paradise.org:6969",
 			},
-			want: &udpTracker{},
 		},
 		{
 			name: "Invalid tracker url",
 			args: args{
 				urlString: "tcp://tracker.leechers-paradise.org:6969",
 			},
-			want:    nil,
 			wantErr: true,
 		},
 	}
@@ -43,13 +38,11 @@ func TestNewTracker(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := NewTracker(tt.args.urlString)
+			_, err := tracker.NewTracker(tt.args.urlString)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewTracker() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-
-			assert.IsType(t, tt.want, got)
 		})
 	}
 }

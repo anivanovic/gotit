@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/anivanovic/gotit"
+	"io"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -12,8 +14,6 @@ import (
 	"github.com/anivanovic/gotit/pkg/torrent"
 
 	"strconv"
-
-	"io/ioutil"
 
 	"errors"
 
@@ -41,7 +41,7 @@ type httpTracker struct {
 	waitInterval
 }
 
-func newHttpTracker(url *url.URL) Tracker {
+func newHttpTracker(url *url.URL) *httpTracker {
 	t := &httpTracker{
 		url:       url,
 		event:     startedEvent,
@@ -60,8 +60,8 @@ func (t httpTracker) Url() string {
 
 func (t *httpTracker) Close() error { return nil }
 
-func (t *httpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, data *AnnounceData) ([]netip.AddrPort, error) {
-	t.buildQuer(torrent, data)
+func (t *httpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, data *gotit.AnnounceData) ([]netip.AddrPort, error) {
+	t.buildQuery(torrent, data)
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, t.Url(), nil)
 	if err != nil {
 		return nil, err
@@ -73,7 +73,7 @@ func (t *httpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, da
 	}
 	defer res.Body.Close()
 
-	body, err := ioutil.ReadAll(res.Body)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,7 @@ func (t *httpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, da
 	return t.readPeers(body)
 }
 
-func (t *httpTracker) buildQuer(torrent *torrent.Torrent, data *AnnounceData) {
+func (t *httpTracker) buildQuery(torrent *torrent.Torrent, data *gotit.AnnounceData) {
 	query := t.url.Query()
 	query.Set("info_hash", string(torrent.Hash))
 	query.Set("peer_id", string(torrent.PeerId))

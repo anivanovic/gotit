@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/anivanovic/gotit"
 	"math/rand"
 	"net/netip"
 	"net/url"
@@ -48,7 +49,7 @@ type udpTracker struct {
 	waitInterval
 }
 
-func newUdpTracker(url *url.URL) (Tracker, error) {
+func newUdpTracker(url *url.URL) (*udpTracker, error) {
 	conn, err := gotitnet.NewTimeoutConn(url.Scheme, url.Host, gotitnet.TrackerTimeout)
 	if err != nil {
 		return nil, err
@@ -70,7 +71,7 @@ func (t *udpTracker) Close() error {
 	return t.conn.Close()
 }
 
-func (t *udpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, data *AnnounceData) ([]netip.AddrPort, error) {
+func (t *udpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, data *gotit.AnnounceData) ([]netip.AddrPort, error) {
 	connId, err := t.handshake(ctx)
 	if err != nil {
 		return nil, err
@@ -130,16 +131,16 @@ func (t *udpTracker) readTrackerResponse(response []byte, transactionId uint32) 
 	}
 }
 
-func createAnnounce(connId uint64, transactionId uint32, torrent *torrent.Torrent, data *AnnounceData) []byte {
+func createAnnounce(connId uint64, transactionId uint32, torrent *torrent.Torrent, data *gotit.AnnounceData) []byte {
 	request := &bytes.Buffer{}
 	binary.Write(request, binary.BigEndian, connId)
 	binary.Write(request, binary.BigEndian, uint32(announce))
 	binary.Write(request, binary.BigEndian, transactionId)
 	binary.Write(request, binary.BigEndian, torrent.Hash)
 	binary.Write(request, binary.BigEndian, torrent.PeerId)
-	binary.Write(request, binary.BigEndian, uint64(data.Downloaded))
-	binary.Write(request, binary.BigEndian, uint64(data.Left))
-	binary.Write(request, binary.BigEndian, uint64(data.Uploaded))
+	binary.Write(request, binary.BigEndian, data.Downloaded)
+	binary.Write(request, binary.BigEndian, data.Left)
+	binary.Write(request, binary.BigEndian, data.Uploaded)
 	binary.Write(request, binary.BigEndian, uint32(none))
 	binary.Write(request, binary.BigEndian, uint32(0))
 	binary.Write(request, binary.BigEndian, rand.Int31())
@@ -193,7 +194,7 @@ func readError(response []byte, transactionId uint32) error {
 	}
 
 	message := string(response[8:])
-	return errors.New("udp error respons: " + message)
+	return errors.New("udp error response: " + message)
 }
 
 func createTransactionId() uint32 {
