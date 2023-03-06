@@ -1,8 +1,9 @@
 package tracker_test
 
 import (
-	"github.com/anivanovic/gotit/pkg/tracker"
 	"testing"
+
+	"github.com/anivanovic/gotit/pkg/tracker"
 )
 
 func TestNewTracker(t *testing.T) {
@@ -18,6 +19,12 @@ func TestNewTracker(t *testing.T) {
 			name: "http tracker",
 			args: args{
 				urlString: "http://www.announcer.com:8090/annunce",
+			},
+		},
+		{
+			name: "https tracker",
+			args: args{
+				urlString: "https://www.announcer.com:8090/annunce",
 			},
 		},
 		{
