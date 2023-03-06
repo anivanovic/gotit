@@ -4,16 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
+	"math/rand"
 	"net/netip"
 	"time"
 
 	"github.com/anivanovic/gotit/pkg/gotitnet"
 	"github.com/anivanovic/gotit/pkg/torrent"
 	"github.com/anivanovic/gotit/pkg/util"
-
-	"errors"
-
-	"math/rand"
 
 	"github.com/bits-and-blooms/bitset"
 	"go.uber.org/zap"
@@ -211,7 +209,7 @@ func (peer *Peer) Announce(ctx context.Context, torrent *torrent.Torrent) error 
 		return err
 	}
 
-	peer.sendMessage(torrent.CreateHandshake())
+	peer.sendMessage(ctx, torrent.CreateHandshake())
 	response, err := peer.conn.ReadPeerHandshake(ctx)
 	if err != nil {
 		return err
@@ -237,14 +235,14 @@ func (peer *Peer) Run(ctx context.Context) {
 			// continue the loop
 		}
 
-		peer.checkKeepAlive()
+		peer.checkKeepAlive(ctx)
 
 		if peer.PeerStatus.Choking {
 			peer.ClientStatus.Interested = true
 			interestedM := createInterestedMessage()
 			peer.logger.Debug("Sending interested message")
 
-			_, err := peer.sendMessage(interestedM)
+			_, err := peer.sendMessage(ctx, interestedM)
 			if err != nil {
 				return
 			}
@@ -269,7 +267,7 @@ func (peer *Peer) Run(ctx context.Context) {
 				}
 			}
 
-			if _, err := peer.sendMessage(requestMsg); err != nil {
+			if _, err := peer.sendMessage(ctx, requestMsg); err != nil {
 				peer.logger.
 					Warn("error sending piece. sleeping 5 seconds",
 						zap.Error(err))
@@ -316,10 +314,10 @@ func (peer *Peer) nextRequestMessage(torrent *torrent.Torrent) []byte {
 	return peer.createPieceMessage()
 }
 
-func (peer *Peer) checkKeepAlive() {
+func (peer *Peer) checkKeepAlive(ctx context.Context) {
 	if time.Since(peer.lastMsgSent).Minutes() >= 1.9 {
 		peer.logger.Debug("Sending keep alive message")
-		peer.sendMessage(make([]byte, 4)) // send 0
+		peer.sendMessage(ctx, make([]byte, 4)) // send 0
 		peer.updateLastMsgSent()
 	}
 }
@@ -394,8 +392,8 @@ func createBitset(payload []byte) *bitset.BitSet {
 	return bitset.From(set)
 }
 
-func (peer *Peer) sendMessage(message []byte) (int, error) {
-	n, err := peer.conn.Write(context.TODO(), message)
+func (peer *Peer) sendMessage(ctx context.Context, message []byte) (int, error) {
+	n, err := peer.conn.Write(ctx, message)
 	peer.logger.Debug("sendMessage to peer",
 		zap.Int("written", n),
 		zap.Error(err))
