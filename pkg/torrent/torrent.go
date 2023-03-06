@@ -5,13 +5,14 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
-	"github.com/tevino/abool/v2"
 	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/tevino/abool/v2"
 
 	"github.com/bits-and-blooms/bitset"
 	"go.uber.org/multierr"
@@ -298,12 +299,10 @@ func (torrent *Torrent) WritePiece(piecesCh <-chan *util.PeerMessage) {
 	}
 
 	for msg := range piecesCh {
-		indx := binary.BigEndian.Uint32(msg.Payload[:4])
-		offset := binary.BigEndian.Uint32(msg.Payload[4:8])
-		piecePoss := int(indx)*torrent.PieceLength + int(offset)
+		piecePoss := int(msg.Index())*torrent.PieceLength + int(msg.Offset())
 
-		if (int(offset) + int(BlockLength)) == torrent.PieceLength {
-			torrent.SetDownloaded(uint(indx))
+		if (int(msg.Offset()) + int(BlockLength)) == torrent.PieceLength {
+			torrent.SetDownloaded(uint(msg.Index()))
 		}
 
 		writeFunc(msg, piecePoss)
