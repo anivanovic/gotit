@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/anivanovic/gotit"
 	"github.com/tevino/abool/v2"
 	"net/netip"
 	"runtime"
@@ -123,12 +124,12 @@ func (mng *Manager) initPeers(ctx context.Context, ips []netip.AddrPort, pieceCh
 	}
 }
 
-func (mng *Manager) announceToTracker(ctx context.Context, t tracker.Tracker) ([]netip.AddrPort, error) {
+func (mng *Manager) announceToTracker(ctx context.Context, t gotit.Tracker) ([]netip.AddrPort, error) {
 	var ips []netip.AddrPort
 	err := retry.Do(
 		func() error {
 			var err error
-			announceData := tracker.AnnounceData{
+			announceData := gotit.AnnounceData{
 				Downloaded: mng.torrentStatus.download,
 				Uploaded:   mng.torrentStatus.upload,
 				Left:       mng.torrentStatus.left,
