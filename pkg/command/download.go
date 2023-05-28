@@ -3,12 +3,13 @@ package command
 import (
 	"errors"
 	"fmt"
-	"github.com/spf13/cobra"
 	"io"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/spf13/cobra"
 
 	"github.com/anivanovic/gotit/pkg/bencode"
 	"github.com/anivanovic/gotit/pkg/download"
@@ -71,12 +72,12 @@ func runDownload(_ *cobra.Command, args []string, f *flags) error {
 		return err
 	}
 
-	var torrentMetadata torrent.TorrentMetadata
+	var torrentMetadata bencode.Metainfo
 	if err := bencode.Unmarshal(data, &torrentMetadata); err != nil {
 		return err
 	}
 
-	torrent, err := torrent.NewTorrent(&torrentMetadata, outDir)
+	torrent, err := torrent.New(&torrentMetadata, outDir)
 	if err != nil {
 		return err
 	}

@@ -1,11 +1,27 @@
 package bencode
 
 import (
+	"fmt"
+	"io"
+	"os"
 	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func readTorrentFile(t testing.TB, name string) []byte {
+	if t != nil {
+		t.Helper()
+	}
+
+	f, err := os.Open(fmt.Sprintf("./testdata/%s", name))
+	if err != nil {
+		t.Fatal("reading torrent file:", err)
+	}
+	data, _ := io.ReadAll(f)
+	return data
+}
 
 func TestParse(t *testing.T) {
 	var nilDict *DictElement
@@ -122,7 +138,7 @@ func TestParse(t *testing.T) {
 	}
 }
 
-var data, _ = readTorrentFile("ubuntu-21.04-desktop-amd64.iso.torrent")
+var data = readTorrentFile(nil, "ubuntu-21.04-desktop-amd64.iso.torrent")
 
 func BenchmarkParse(b *testing.B) {
 	var r Bencode

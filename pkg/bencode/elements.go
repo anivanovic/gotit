@@ -11,12 +11,6 @@ type (
 		Raw() []byte
 	}
 
-	DictBencode interface {
-		Bencode
-
-		Value(key string) Bencode
-	}
-
 	IntElement    int
 	StringElement string
 	ListElement   struct {
@@ -141,4 +135,39 @@ func addTab(tabs string) string {
 
 func newLine(tabs string) string {
 	return "\n" + tabs
+}
+
+type (
+	dictBencodeBuilder struct {
+		dict map[string]Bencode
+	}
+	Builder interface {
+		Add(key string, value Bencode) Builder
+		Generate() Bencode
+	}
+)
+
+func (d *dictBencodeBuilder) Add(key string, value Bencode) Builder {
+	d.dict[key] = value
+	return d
+}
+
+func (d *dictBencodeBuilder) Generate() Bencode {
+	return DictElement{value: d.dict}
+}
+
+func NewDictBuilder() Builder {
+	return &dictBencodeBuilder{dict: map[string]Bencode{}}
+}
+
+func String(value string) Bencode {
+	return StringElement(value)
+}
+
+func Integer(value int) Bencode {
+	return IntElement(value)
+}
+
+func List(values ...Bencode) Bencode {
+	return ListElement{Value: values}
 }

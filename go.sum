@@ -1,3 +1,5 @@
+code.cloudfoundry.org/bytefmt v0.0.0-20230406175530-3579ae0680eb h1:pFPRj/kkkjan3A7jnT+Hf8FmPVQ3cdBBWgpNLppqcvU=
+code.cloudfoundry.org/bytefmt v0.0.0-20230406175530-3579ae0680eb/go.mod h1:wYHCXH/gI19ujoFVuMkY48qPpPCoHLKBKXPkn67h/Yc=
 github.com/avast/retry-go v3.0.0+incompatible h1:4SOWQ7Qs+oroOTQOYnAHqelpCO0biHSxpiH9JdtuBj0=
 github.com/avast/retry-go v3.0.0+incompatible/go.mod h1:XtSnn+n/sHqQIpZ10K1qAevBhOOCWBLXXy3hyiqqBrY=
 github.com/benbjohnson/clock v1.1.0 h1:Q92kusRqC1XV2MjkWETPvjJVqKetz1OzxZB7mHJLju8=

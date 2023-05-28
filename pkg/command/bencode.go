@@ -2,12 +2,12 @@ package command
 
 import (
 	"fmt"
-	"github.com/spf13/cobra"
 	"io"
 	"os"
 
+	"github.com/spf13/cobra"
+
 	"github.com/anivanovic/gotit/pkg/bencode"
-	"github.com/anivanovic/gotit/pkg/torrent"
 )
 
 func NewCommand() *cobra.Command {
@@ -25,26 +25,22 @@ func run(_ *cobra.Command, args []string) {
 	file := args[0]
 	f, err := os.Open(file)
 	if err != nil {
-		fmt.Fprint(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "could not open %s: %v", file, err)
 		os.Exit(1)
 	}
 
 	data, err := io.ReadAll(f)
 	if err != nil {
-		fmt.Fprint(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "error reading %s: %v", file, err)
 		os.Exit(1)
 	}
 
-	torrentMetadata := torrent.TorrentMetadata{}
+	torrentMetadata := bencode.Metainfo{}
 	if err := bencode.Unmarshal(data, &torrentMetadata); err != nil {
-		fmt.Fprint(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "parsing metadata file: %v", err)
 		os.Exit(1)
 	}
 
-	torrent2, err := torrent.NewTorrent(&torrentMetadata, "")
-	if err != nil {
-		fmt.Fprint(os.Stderr, err)
-		os.Exit(1)
-	}
-	fmt.Println(torrent2)
+	fmt.Println("Metainfo file:", file)
+	fmt.Println(torrentMetadata)
 }
