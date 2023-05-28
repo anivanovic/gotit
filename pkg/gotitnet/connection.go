@@ -15,9 +15,9 @@ const (
 )
 
 type TimeoutConn struct {
-	// Underlaying TCP/UDP connection.
+	// Underlying TCP/UDP connection.
 	c net.Conn
-	// Timeout used when readin or writing on
+	// Timeout used when reading or writing on
 	// this connection.
 	timeout time.Duration
 }
@@ -93,7 +93,6 @@ func (c *TimeoutConn) readExactly(ctx context.Context, len int) ([]byte, error) 
 	if _, err := io.ReadFull(c.c, buf); err != nil {
 		return nil, err
 	}
-
 	return buf, nil
 }
 
