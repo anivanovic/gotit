@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/anivanovic/gotit/pkg/bencode"
 )
 
 func TestTorrent_createTorrentFiles(t *testing.T) {
@@ -18,7 +20,7 @@ func TestTorrent_createTorrentFiles(t *testing.T) {
 	})
 
 	torrent := Torrent{
-		TorrentFiles: []TorrentFile{
+		TorrentFiles: []bencode.TorrentFile{
 			{
 				Path:   []string{"1.txt"},
 				Length: 1,
@@ -31,7 +33,7 @@ func TestTorrent_createTorrentFiles(t *testing.T) {
 		Name:        "torrent",
 		IsDirectory: true,
 	}
-	if err := torrent.createTorrentFiles(dir); err != nil {
+	if err := torrent.initDownloadDir(dir); err != nil {
 		t.Fatal("error creating torrent files", err)
 	}
 
@@ -42,7 +44,7 @@ func TestTorrent_createTorrentFiles(t *testing.T) {
 
 	torrent.IsDirectory = false
 	torrent.Name = "test.txt"
-	torrent.createTorrentFiles(dir)
+	torrent.initDownloadDir(dir)
 	file := filepath.Join(dir, torrent.Name)
 	assert.FileExists(t, file)
 }
