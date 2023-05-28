@@ -45,9 +45,9 @@ func TestNewTracker(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := tracker.NewTracker(tt.args.urlString)
+			_, err := tracker.New(tt.args.urlString)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("NewTracker() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 		})

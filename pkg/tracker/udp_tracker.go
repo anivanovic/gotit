@@ -1,25 +1,22 @@
 package tracker
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
-	"github.com/anivanovic/gotit"
 	"math/rand"
 	"net/netip"
 	"net/url"
 	"time"
 
+	"github.com/anivanovic/gotit"
+
 	"github.com/anivanovic/gotit/pkg/gotitnet"
 	"github.com/anivanovic/gotit/pkg/torrent"
 
-	"bytes"
-
-	"errors"
-
 	"go.uber.org/zap"
-
-	"github.com/anivanovic/gotit/pkg/bencode"
 )
 
 const protocolId uint64 = 0x41727101980
@@ -63,7 +60,7 @@ func newUdpTracker(url *url.URL) (*udpTracker, error) {
 	return &tracker, nil
 }
 
-func (t udpTracker) Url() string {
+func (t *udpTracker) Url() string {
 	return t.url
 }
 
@@ -82,12 +79,12 @@ func (t *udpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, dat
 	request := createAnnounce(connId, transactionId, torrent, data)
 	t.conn.Write(ctx, request)
 	log.Info("Announce sent to tracker", zap.String("ip", t.Url()))
-	response, err := t.conn.ReadAll(context.TODO())
+	response, err := t.conn.ReadAll(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	err = t.readTrackerResponse(response, transactionId)
+	err = t.parseTrackerResponse(response, transactionId)
 	return t.ips, err
 }
 
@@ -108,12 +105,14 @@ func (t *udpTracker) handshake(ctx context.Context) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	t.readTrackerResponse(response, transactionId)
+	if err := t.parseTrackerResponse(response, transactionId); err != nil {
+		return 0, err
+	}
 
 	return t.connectionId, nil
 }
 
-func (t *udpTracker) readTrackerResponse(response []byte, transactionId uint32) error {
+func (t *udpTracker) parseTrackerResponse(response []byte, transactionId uint32) error {
 	actionCode := int(binary.BigEndian.Uint32(response[:4]))
 	var err error
 
@@ -167,7 +166,7 @@ func readConnect(data []byte, transactionId uint32) (uint64, error) {
 
 func (t *udpTracker) readAnnounce(response []byte, transactionId uint32) ([]netip.AddrPort, error) {
 	if len(response) < 20 {
-		return nil, errors.New("udp announce respons size less then 20")
+		return nil, errors.New("udp tracker invalid announce response size")
 	}
 	if err := checkResponseTransactionId(response, transactionId); err != nil {
 		return nil, err
@@ -182,7 +181,7 @@ func (t *udpTracker) readAnnounce(response []byte, transactionId uint32) ([]neti
 		zap.Duration("interval", t.interval),
 		zap.Uint32("leechers", leechers),
 		zap.Uint32("seeders", seeders))
-	return parseCompactPeers(bencode.StringElement(response[20:])), nil
+	return parseCompactPeers(response[20:]), nil
 }
 
 func readError(response []byte, transactionId uint32) error {
@@ -204,7 +203,7 @@ func createTransactionId() uint32 {
 func checkResponseTransactionId(response []byte, transactionId uint32) error {
 	responseId := binary.BigEndian.Uint32(response[4:8])
 	if transactionId != responseId {
-		return errors.New("udp response transaction_id not the same as sent")
+		return errors.New("udp tracker response transaction_id not the same as sent")
 	}
 
 	return nil

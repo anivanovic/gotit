@@ -3,9 +3,11 @@ package tracker
 import (
 	"context"
 	"fmt"
-	"github.com/anivanovic/gotit"
+	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/anivanovic/gotit"
 )
 
 type waitInterval struct {
@@ -21,18 +23,18 @@ func (t waitInterval) WaitInterval(ctx context.Context) error {
 	}
 }
 
-func NewTracker(urlString string) (gotit.Tracker, error) {
-	url, err := url.Parse(urlString)
+func New(addr string) (gotit.Tracker, error) {
+	parsedAddr, err := url.Parse(addr)
 	if err != nil {
 		return nil, err
 	}
 
-	switch url.Scheme {
+	switch parsedAddr.Scheme {
 	case "udp":
-		return newUdpTracker(url)
+		return newUdpTracker(parsedAddr)
 	case "http", "https":
-		return newHttpTracker(url), nil
+		return newHttpTracker(addr, http.DefaultClient), nil
 	default:
-		return nil, fmt.Errorf("tracker: unsupported protocol %s", url.Scheme)
+		return nil, fmt.Errorf("unsupported tracker protocol %s", parsedAddr.Scheme)
 	}
 }

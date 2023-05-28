@@ -60,19 +60,26 @@ func processTarget(target interface{}, bencode Bencode) error {
 		if !f.CanSet() || tagName == "" {
 			continue
 		}
+		optional := false
+		splits := strings.Split(tagName, ",")
+		tagName = splits[0]
+		for _, opt := range splits[1:] {
+			if opt == "optional" {
+				optional = true
+			}
+		}
 
 		dict, ok := bencode.(*DictElement)
 		if !ok {
 			panic("bencode internal: bencode element not *DictElement")
 		}
 		value := dict.Value(tagName)
-		if value != nil {
-			err := setField(f, value, ftype.Name)
-			if err != nil {
-				return err
-			}
-		} else {
-			// TODO: we should throw error if configured in struct tag
+		if value == nil && !optional {
+			return fmt.Errorf("could not found %s in bencode message", tagName)
+		}
+		err := setField(f, value, ftype.Name)
+		if err != nil && !optional {
+			return err
 		}
 	}
 
@@ -105,11 +112,11 @@ func setField(f reflect.Value, value Bencode, fieldName string) error {
 		}
 		f.SetInt(vali)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		valu, err := strconv.ParseUint(value.String(), 0, ftype.Bits())
+		val, err := strconv.ParseUint(value.String(), 0, ftype.Bits())
 		if err != nil {
 			return err
 		}
-		f.SetUint(valu)
+		f.SetUint(val)
 	case reflect.Slice:
 		// support byte array and set to raw value
 		if f.Type().Elem().Kind() == reflect.Uint8 {

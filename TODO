@@ -1,2 +1,3 @@
 * For integer bencode values we can only set int type. Support intXX and uintXX type values
 * Bencode should remember order in Dict and List elements
+* Parse ipv6 compact response from the tracker
