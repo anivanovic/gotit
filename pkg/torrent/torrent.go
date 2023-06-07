@@ -21,14 +21,13 @@ import (
 
 const BlockLength uint = 64 * 1024
 
-var log = zap.L()
-
 var (
 	BittorrentProto = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
 	clientIdPrefix  = [8]byte{'-', 'G', 'O', '0', '1', '0', '0', '-'}
 )
 
 type Torrent struct {
+	logger       *zap.Logger
 	Trackers     util.StringSet
 	Hash         []byte
 	Length       int
@@ -58,13 +57,15 @@ type Torrent struct {
 	doneCh chan struct{}
 }
 
-func New(metainfo *bencode.Metainfo, downloadDir string) (*Torrent, error) {
+func New(metainfo *bencode.Metainfo, downloadDir string, logger *zap.Logger) (*Torrent, error) {
 	t := &Torrent{
+		logger:       logger,
 		requestedMu:  &sync.Mutex{},
 		downloadedMu: &sync.Mutex{},
 		Metadata:     metainfo,
 	}
 	t.PeerId = createClientId()
+	t.logger.Debug("Created client id", zap.String("id", string(t.PeerId)))
 	t.Name = metainfo.Info.Name
 	t.CreatedBy = metainfo.CreatedBy
 	t.CreationDate = metainfo.CreationDate
@@ -134,7 +135,6 @@ func createClientId() []byte {
 
 	// create remaining random bytes
 	rand.Read(peerId[len(clientIdPrefix):])
-	log.Debug("Created client id", zap.String("id", string(peerId)))
 	return peerId
 }
 
@@ -205,9 +205,9 @@ func (t *Torrent) WritePiece(piecesCh <-chan *util.PeerMessage) {
 					piecePoss = piecePoss - torFile.Length
 					continue
 				} else {
-					log.Debug("Writting to file ",
+					t.logger.Debug("Writing to file ",
 						zap.String("file", torFile.Path[0]),
-						zap.Int("possition", piecePoss))
+						zap.Int("position", piecePoss))
 
 					pieceLen := len(msg.Data())
 					unoccupiedLength := torFile.Length - piecePoss

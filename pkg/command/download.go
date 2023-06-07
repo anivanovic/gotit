@@ -1,19 +1,20 @@
 package command
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	_ "net/http/pprof"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 
 	"github.com/anivanovic/gotit/pkg/bencode"
 	"github.com/anivanovic/gotit/pkg/download"
 	"github.com/anivanovic/gotit/pkg/torrent"
+	"github.com/anivanovic/gotit/pkg/util"
 )
 
 type flags struct {
@@ -34,13 +35,9 @@ func NewDownloadCommand() *cobra.Command {
 		Long:  "Start download process for torrent file",
 		Args:  cobra.ExactArgs(1),
 
-		Run: func(cmd *cobra.Command, args []string) {
-			err := runDownload(cmd, args, f)
-			if err != nil {
-				log.Fatal("got error:", err)
-				return
-			}
-		},
+		Run: util.NewCmdRun(func(ctx context.Context, app util.ApplicationContainer, args []string) error {
+			return runDownload(ctx, app.Logger, args, f)
+		}),
 	}
 	cmd.Flags().StringVarP(&f.output, "out", "o", "", "Torrent download output directory")
 	cmd.Flags().IntVarP(&f.peerNum, "num-peer", "n", 30, "Maximum number of peers to download torrent from")
@@ -50,7 +47,7 @@ func NewDownloadCommand() *cobra.Command {
 	return cmd
 }
 
-func runDownload(_ *cobra.Command, args []string, f *flags) error {
+func runDownload(ctx context.Context, l *zap.Logger, args []string, f *flags) error {
 	outDir := f.output
 	torrentFile := args[0]
 	stat, err := os.Stat(outDir)
@@ -77,22 +74,12 @@ func runDownload(_ *cobra.Command, args []string, f *flags) error {
 		return err
 	}
 
-	torrent, err := torrent.New(&torrentMetadata, outDir)
+	t, err := torrent.New(&torrentMetadata, outDir, l)
 	if err != nil {
 		return err
 	}
-	mng := download.NewMng(torrent, f.peerNum, f.listenPort)
-	go func() {
-		sigs := make(chan os.Signal, 1)
-		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-		<-sigs
+	mng := download.NewMng(t, l, f.peerNum, f.listenPort)
+	defer mng.Stop()
 
-		mng.Close()
-	}()
-
-	if err := mng.Download(); err != nil {
-		return err
-	}
-
-	return nil
+	return mng.Download(ctx)
 }

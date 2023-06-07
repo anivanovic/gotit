@@ -1,7 +1,6 @@
 package torrent
 
 import (
-	"go.uber.org/zap"
 	"sync"
 )
 
@@ -21,10 +20,6 @@ func (pq *PiecesQueue) RequestFailed(req []byte) {
 	pq.failedMu.Lock()
 	pq.failedMessages = append(pq.failedMessages, req)
 	pq.failedMu.Unlock()
-
-	log.Warn("Piece request faild")
-	log.Debug("Peer request failed messages",
-		zap.Int("size", len(pq.failedMessages)))
 }
 
 func (pq *PiecesQueue) FailedPieceMessage() []byte {

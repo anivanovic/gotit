@@ -75,10 +75,12 @@ func processTarget(target interface{}, bencode Bencode) error {
 		}
 		value := dict.Value(tagName)
 		if value == nil && !optional {
-			return fmt.Errorf("could not found %s in bencode message", tagName)
+			return fmt.Errorf("Required ben field %q not found", tagName)
 		}
-		err := setField(f, value, ftype.Name)
-		if err != nil && !optional {
+		if value == nil {
+			continue
+		}
+		if err := setField(f, value, ftype.Name); err != nil {
 			return err
 		}
 	}
@@ -199,19 +201,20 @@ func (f TorrentFile) FilePath() string {
 
 type Metainfo struct {
 	Announce     string     `ben:"announce"`
-	AnnounceList [][]string `ben:"announce-list"`
-	UrlList      []string   `ben:"url-list"`
+	AnnounceList [][]string `ben:"announce-list,optional"`
+	UrlList      []string   `ben:"url-list,optional"`
 	Info         struct {
-		Files       []TorrentFile `ben:"files"`
-		Length      int64         `ben:"length"`
+		Files       []TorrentFile `ben:"files,optional"`
+		Length      int64         `ben:"length,optional"`
 		Name        string        `ben:"name"`
 		PieceLength int64         `ben:"piece length"`
 		Pieces      string        `ben:"pieces"`
 	} `ben:"info"`
 	InfoDictRaw  []byte `ben:"info"`
-	Comment      string `ben:"comment"`
-	CreatedBy    string `ben:"created by"`
-	CreationDate int64  `ben:"creation date"`
+	Comment      string `ben:"comment,optional"`
+	CreatedBy    string `ben:"created by,optional"`
+	CreationDate int64  `ben:"creation date,optional"`
+	Encoding     string `ben:"encoding,optional"`
 }
 
 func (m Metainfo) String() string {

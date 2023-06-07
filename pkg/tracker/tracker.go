@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/anivanovic/gotit"
 )
 
@@ -23,7 +25,7 @@ func (t waitInterval) WaitInterval(ctx context.Context) error {
 	}
 }
 
-func New(addr string) (gotit.Tracker, error) {
+func New(addr string, logger *zap.Logger) (gotit.Tracker, error) {
 	parsedAddr, err := url.Parse(addr)
 	if err != nil {
 		return nil, err
@@ -31,9 +33,9 @@ func New(addr string) (gotit.Tracker, error) {
 
 	switch parsedAddr.Scheme {
 	case "udp":
-		return newUdpTracker(parsedAddr)
+		return newUdpTracker(parsedAddr, logger)
 	case "http", "https":
-		return newHttpTracker(addr, http.DefaultClient), nil
+		return newHttpTracker(addr, http.DefaultClient, logger), nil
 	default:
 		return nil, fmt.Errorf("unsupported tracker protocol %s", parsedAddr.Scheme)
 	}

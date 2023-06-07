@@ -1,11 +1,5 @@
 package util
 
-import (
-	"go.uber.org/zap"
-)
-
-var log = zap.L()
-
 type StringSet map[string]struct{}
 
 func NewStringSet() StringSet {
@@ -30,8 +24,4 @@ func (s StringSet) AddAll(other StringSet) {
 func (s StringSet) Contains(obj string) bool {
 	_, ok := s[obj]
 	return ok
-}
-
-func SetLogger(l *zap.Logger) {
-	log = l
 }

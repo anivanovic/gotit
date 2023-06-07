@@ -1,13 +1,16 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 
 	"github.com/anivanovic/gotit/pkg/bencode"
+	"github.com/anivanovic/gotit/pkg/util"
 )
 
 func NewCommand() *cobra.Command {
@@ -16,31 +19,31 @@ func NewCommand() *cobra.Command {
 		Short: "Inspect torrent file",
 		Long:  "Decode torrent file in bencode format and print human readable metadata about torrent",
 		Args:  cobra.ExactArgs(1),
-		Run:   run,
+		Run:   util.NewCmdRun(run),
 	}
 	return cmd
 }
 
-func run(_ *cobra.Command, args []string) {
+func run(_ context.Context, app util.ApplicationContainer, args []string) error {
 	file := args[0]
 	f, err := os.Open(file)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "could not open %s: %v", file, err)
-		os.Exit(1)
+		app.Logger.Fatal("open file", zap.Error(err))
 	}
 
 	data, err := io.ReadAll(f)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error reading %s: %v", file, err)
-		os.Exit(1)
+		app.Logger.Sugar().Fatalf("read file %s: %v", file, err)
 	}
 
 	torrentMetadata := bencode.Metainfo{}
 	if err := bencode.Unmarshal(data, &torrentMetadata); err != nil {
-		fmt.Fprintf(os.Stderr, "parsing metadata file: %v", err)
-		os.Exit(1)
+		app.Logger.Fatal("parse torrent file", zap.Error(err))
 	}
 
 	fmt.Println("Metainfo file:", file)
 	fmt.Println(torrentMetadata)
+
+	// TODO: return errors instead
+	return nil
 }

@@ -30,20 +30,20 @@ const (
 	completedEvent tEvent = "completed"
 )
 
-var log = zap.L()
-
 type httpTracker struct {
 	c         *http.Client
 	addr      string
 	trackerId string
 	event     tEvent
 
+	logger *zap.Logger
 	waitInterval
 }
 
-func newHttpTracker(addr string, client *http.Client) *httpTracker {
+func newHttpTracker(addr string, client *http.Client, logger *zap.Logger) *httpTracker {
 	t := &httpTracker{
 		c:         client,
+		logger:    logger,
 		addr:      addr,
 		event:     startedEvent,
 		trackerId: uuid.NewString(),
@@ -74,7 +74,7 @@ func (t *httpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, da
 	}
 	defer func() {
 		if err := res.Body.Close(); err != nil {
-			log.Warn("error closing announce response",
+			t.logger.Warn("error closing announce response",
 				zap.Error(err),
 				zap.String("tracker addr", t.addr))
 		}
@@ -86,7 +86,7 @@ func (t *httpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, da
 	}
 
 	if res.StatusCode != 200 {
-		log.Warn("Tracker response with error status code",
+		t.logger.Warn("Tracker response with error status code",
 			zap.Int("statusCode", res.StatusCode),
 			zap.ByteString("body", body),
 			zap.String("addr", t.Url()))
@@ -123,7 +123,7 @@ func (t *httpTracker) readPeers(res []byte) ([]netip.AddrPort, error) {
 	t.interval = time.Duration(announceResponse.Interval) * time.Second
 
 	if announceResponse.Peers != nil {
-		return parseBencodePeers(announceResponse.Peers), nil
+		return t.parseBencodePeers(announceResponse.Peers), nil
 	}
 	if announceResponse.PeersCompact != nil {
 		return parseCompactPeers(announceResponse.PeersCompact), nil
@@ -135,22 +135,28 @@ func (t *httpTracker) readPeers(res []byte) ([]netip.AddrPort, error) {
 	return nil, errors.New("successful tracker response without ")
 }
 
-func parseBencodePeers(peers []gotit.AnnouncePeer) []netip.AddrPort {
+func (t *httpTracker) parseBencodePeers(peers []gotit.AnnouncePeer) []netip.AddrPort {
 	ips := make([]netip.AddrPort, len(peers))
 	for _, p := range peers {
-		addr, err := netip.ParseAddrPort(fmt.Sprintf("%s:%s", p.Ip, p.Port))
+		ip, err := netip.ParseAddr(p.Ip)
 		if err != nil {
-			log.Error(
+			t.logger.Error(
 				"tracker sent invalid peer ip address",
 				zap.Error(err),
 				zap.String("ip", p.Ip),
 				zap.String("port", p.Port),
 			)
-
 			continue
 		}
-
-		ips = append(ips, addr)
+		port, err := strconv.ParseUint(p.Port, 10, 16)
+		if err != nil {
+			t.logger.Error(
+				"parsing port",
+				zap.Error(err),
+			)
+			continue
+		}
+		ips = append(ips, netip.AddrPortFrom(ip, uint16(port)))
 	}
 
 	return ips

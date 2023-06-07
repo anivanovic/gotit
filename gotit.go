@@ -24,11 +24,11 @@ type (
 	}
 
 	AnnounceResponse struct {
-		Failure      string         `ben:"failure reason"`
+		Failure      string         `ben:"failure reason,optional"`
 		Interval     int            `ben:"interval"`
 		Peers        []AnnouncePeer `ben:"peers,optional"`
 		PeersCompact []byte         `ben:"peers,optional"`
-		PeersIpv6    []byte         `ben:"peers6"`
+		PeersIpv6    []byte         `ben:"peers6,optional"`
 	}
 
 	AnnouncePeer struct {

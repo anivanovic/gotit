@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	PeerTimeout    = time.Second * 3
-	TrackerTimeout = time.Second * 5
-	DialTimeout    = time.Second * 5
+	PeerTimeout    = time.Millisecond * 300
+	TrackerTimeout = time.Millisecond * 500
+	DialTimeout    = time.Second * 1
 )
 
 type TimeoutConn struct {
@@ -80,6 +80,7 @@ func (c *TimeoutConn) ReadAll(ctx context.Context) ([]byte, error) {
 // ReadUdpHandshake reads udp tracker handshake from socket.
 // Read deadline is set to timeoutConn.timeout
 func (c *TimeoutConn) ReadUdpHandshake(ctx context.Context) ([]byte, error) {
+	c.c.Close()
 	return c.readExactly(ctx, 16)
 }
 

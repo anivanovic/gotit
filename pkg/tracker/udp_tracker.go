@@ -43,10 +43,11 @@ type udpTracker struct {
 	connectionId  uint64
 	transactionId uint32
 
+	log *zap.Logger
 	waitInterval
 }
 
-func newUdpTracker(url *url.URL) (*udpTracker, error) {
+func newUdpTracker(url *url.URL, logger *zap.Logger) (*udpTracker, error) {
 	conn, err := gotitnet.NewTimeoutConn(url.Scheme, url.Host, gotitnet.TrackerTimeout)
 	if err != nil {
 		return nil, err
@@ -56,6 +57,7 @@ func newUdpTracker(url *url.URL) (*udpTracker, error) {
 		conn:         conn,
 		waitInterval: waitInterval{time.Minute},
 		url:          url.String(),
+		log:          logger,
 	}
 	return &tracker, nil
 }
@@ -78,7 +80,7 @@ func (t *udpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, dat
 	// TODO propagate download stats
 	request := createAnnounce(connId, transactionId, torrent, data)
 	t.conn.Write(ctx, request)
-	log.Info("Announce sent to tracker", zap.String("ip", t.Url()))
+	t.log.Info("Announce sent to tracker", zap.String("ip", t.Url()))
 	response, err := t.conn.ReadAll(ctx)
 	if err != nil {
 		return nil, err
@@ -99,7 +101,7 @@ func (t *udpTracker) handshake(ctx context.Context) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	log.Info("Sent handshake to tracker")
+	t.log.Info("Sent handshake to tracker")
 
 	response, err := t.conn.ReadUdpHandshake(ctx)
 	if err != nil {
@@ -157,10 +159,6 @@ func readConnect(data []byte, transactionId uint32) (uint64, error) {
 	}
 
 	conId := binary.BigEndian.Uint64(data[8:16])
-	log.Info("CreateTracker handshake response",
-		zap.Uint64("conn id", conId),
-		zap.Int("res code", connect))
-
 	return conId, nil
 }
 
@@ -176,7 +174,7 @@ func (t *udpTracker) readAnnounce(response []byte, transactionId uint32) ([]neti
 	leechers := binary.BigEndian.Uint32(response[12:16])
 	seeders := binary.BigEndian.Uint32(response[16:20])
 
-	log.Info("CreateTracker message",
+	t.log.Info("CreateTracker message",
 		zap.Int("resCode", announce),
 		zap.Duration("interval", t.interval),
 		zap.Uint32("leechers", leechers),
