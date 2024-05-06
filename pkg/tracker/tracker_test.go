@@ -1,12 +1,13 @@
 package tracker_test
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 
 	"github.com/anivanovic/gotit/pkg/logger"
 	"github.com/anivanovic/gotit/pkg/tracker"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewTracker(t *testing.T) {
@@ -57,4 +58,46 @@ func TestNewTracker(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTrackerAnnounce(t *testing.T) {
+	//tUrl := setUpTracker(t, func(w http.ResponseWriter, r *http.Request) {
+	//	w.Write([]byte("what am I doing"))
+	//})
+	//logger := zap.NewNop()
+	//tracker, err := tracker.New(tUrl, logger)
+	//assert.NoError(t, err)
+
+	//tracker.Announce(context.Background(), torrent.New(&bencode.Metainfo{
+	//	Announce:     "",
+	//	AnnounceList: nil,
+	//	UrlList:      nil,
+	//	Info: struct {
+	//		Files       []bencode.TorrentFile `ben:"files,optional"`
+	//		Length      int64                 `ben:"length,optional"`
+	//		Name        string                `ben:"name"`
+	//		PieceLength int64                 `ben:"piece length"`
+	//		Pieces      string                `ben:"pieces"`
+	//	}{},
+	//	InfoDictRaw:  nil,
+	//	Comment:      "",
+	//	CreatedBy:    "",
+	//	CreationDate: 0,
+	//	Encoding:     "",
+	//}, "", logger), &gotit.AnnounceData{
+	//	Downloaded: 0,
+	//	Uploaded:   0,
+	//	Left:       0,
+	//	Port:       0,
+	//})
+}
+
+func setUpTracker(t *testing.T, handler http.HandlerFunc) string {
+	t.Helper()
+	s := httptest.NewServer(handler)
+	t.Cleanup(func() {
+		s.Close()
+	})
+
+	return s.URL
 }

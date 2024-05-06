@@ -12,10 +12,9 @@ import (
 	"time"
 
 	"github.com/anivanovic/gotit"
+	"github.com/anivanovic/gotit/pkg/peer"
 
 	"github.com/anivanovic/gotit/pkg/gotitnet"
-	"github.com/anivanovic/gotit/pkg/torrent"
-
 	"go.uber.org/zap"
 )
 
@@ -70,7 +69,7 @@ func (t *udpTracker) Close() error {
 	return t.conn.Close()
 }
 
-func (t *udpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, data *gotit.AnnounceData) ([]netip.AddrPort, error) {
+func (t *udpTracker) Announce(ctx context.Context, torrentHash string, data *gotit.AnnounceData) ([]netip.AddrPort, error) {
 	connId, err := t.handshake(ctx)
 	if err != nil {
 		return nil, err
@@ -78,10 +77,10 @@ func (t *udpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, dat
 
 	transactionId := createTransactionId()
 	// TODO propagate download stats
-	request := createAnnounce(connId, transactionId, torrent, data)
-	t.conn.Write(ctx, request)
+	request := createAnnounce(connId, transactionId, torrentHash, data)
+	t.conn.Write(request)
 	t.log.Info("Announce sent to tracker", zap.String("ip", t.Url()))
-	response, err := t.conn.ReadAll(ctx)
+	response, err := t.conn.ReadAll()
 	if err != nil {
 		return nil, err
 	}
@@ -97,13 +96,13 @@ func (t *udpTracker) handshake(ctx context.Context) (uint64, error) {
 	binary.Write(request, binary.BigEndian, uint32(connect))
 	binary.Write(request, binary.BigEndian, transactionId)
 
-	_, err := t.conn.Write(ctx, request.Bytes())
+	_, err := t.conn.Write(request.Bytes())
 	if err != nil {
 		return 0, err
 	}
 	t.log.Info("Sent handshake to tracker")
 
-	response, err := t.conn.ReadUdpHandshake(ctx)
+	response, err := t.conn.ReadUdpHandshake()
 	if err != nil {
 		return 0, err
 	}
@@ -132,13 +131,13 @@ func (t *udpTracker) parseTrackerResponse(response []byte, transactionId uint32)
 	}
 }
 
-func createAnnounce(connId uint64, transactionId uint32, torrent *torrent.Torrent, data *gotit.AnnounceData) []byte {
+func createAnnounce(connId uint64, transactionId uint32, torrentHash string, data *gotit.AnnounceData) []byte {
 	request := &bytes.Buffer{}
 	binary.Write(request, binary.BigEndian, connId)
 	binary.Write(request, binary.BigEndian, uint32(announce))
 	binary.Write(request, binary.BigEndian, transactionId)
-	binary.Write(request, binary.BigEndian, torrent.Hash)
-	binary.Write(request, binary.BigEndian, torrent.PeerId)
+	binary.Write(request, binary.BigEndian, torrentHash)
+	binary.Write(request, binary.BigEndian, peer.ClientId)
 	binary.Write(request, binary.BigEndian, data.Downloaded)
 	binary.Write(request, binary.BigEndian, data.Left)
 	binary.Write(request, binary.BigEndian, data.Uploaded)

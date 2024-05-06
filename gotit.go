@@ -4,13 +4,11 @@ import (
 	"context"
 	"io"
 	"net/netip"
-
-	"github.com/anivanovic/gotit/pkg/torrent"
 )
 
 type (
 	Tracker interface {
-		Announce(ctx context.Context, t *torrent.Torrent, data *AnnounceData) ([]netip.AddrPort, error)
+		Announce(ctx context.Context, torrentHash string, data *AnnounceData) ([]netip.AddrPort, error)
 		Url() string
 		WaitInterval(ctx context.Context) error
 		io.Closer
@@ -25,7 +23,7 @@ type (
 
 	AnnounceResponse struct {
 		Failure      string         `ben:"failure reason,optional"`
-		Interval     int            `ben:"interval"`
+		Interval     int            `ben:"interval,optional"`
 		Peers        []AnnouncePeer `ben:"peers,optional"`
 		PeersCompact []byte         `ben:"peers,optional"`
 		PeersIpv6    []byte         `ben:"peers6,optional"`

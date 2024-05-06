@@ -1,4 +1,4 @@
-package command
+package cmd
 
 import (
 	"context"
@@ -14,7 +14,6 @@ import (
 	"github.com/anivanovic/gotit/pkg/bencode"
 	"github.com/anivanovic/gotit/pkg/download"
 	"github.com/anivanovic/gotit/pkg/torrent"
-	"github.com/anivanovic/gotit/pkg/util"
 )
 
 type flags struct {
@@ -27,7 +26,7 @@ func newFlags() *flags {
 	return &flags{}
 }
 
-func NewDownloadCommand() *cobra.Command {
+func NewDownloadCommand(app *App) *cobra.Command {
 	f := newFlags()
 	cmd := &cobra.Command{
 		Use:   "download -out <out_dir> <torrent_file>",
@@ -35,14 +34,14 @@ func NewDownloadCommand() *cobra.Command {
 		Long:  "Start download process for torrent file",
 		Args:  cobra.ExactArgs(1),
 
-		Run: util.NewCmdRun(func(ctx context.Context, app util.ApplicationContainer, args []string) error {
-			return runDownload(ctx, app.Logger, args, f)
+		Run: app.NewCmdRun(func(ctx context.Context, appContext AppContext, args []string) error {
+			return runDownload(ctx, appContext.log, args, f)
 		}),
 	}
 	cmd.Flags().StringVarP(&f.output, "out", "o", "", "Torrent download output directory")
 	cmd.Flags().IntVarP(&f.peerNum, "num-peer", "n", 30, "Maximum number of peers to download torrent from")
 	cmd.Flags().IntVarP(&f.listenPort, "port", "p", 6666, "Port number on which to listen for other peers requests")
-	cmd.MarkFlagRequired("out")
+	_ = cmd.MarkFlagRequired("out")
 
 	return cmd
 }

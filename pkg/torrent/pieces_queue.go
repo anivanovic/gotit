@@ -2,27 +2,29 @@ package torrent
 
 import (
 	"sync"
+
+	"github.com/anivanovic/gotit/pkg/util"
 )
 
 type PiecesQueue struct {
 	failedMu       sync.Mutex
-	failedMessages [][]byte
+	failedMessages []*util.PeerMessage
 }
 
 func NewPiecesQueue() *PiecesQueue {
 	return &PiecesQueue{
 		failedMu:       sync.Mutex{},
-		failedMessages: make([][]byte, 0, 100),
+		failedMessages: make([]*util.PeerMessage, 0, 100),
 	}
 }
 
-func (pq *PiecesQueue) RequestFailed(req []byte) {
+func (pq *PiecesQueue) RequestFailed(msg *util.PeerMessage) {
 	pq.failedMu.Lock()
-	pq.failedMessages = append(pq.failedMessages, req)
+	pq.failedMessages = append(pq.failedMessages, msg)
 	pq.failedMu.Unlock()
 }
 
-func (pq *PiecesQueue) FailedPieceMessage() []byte {
+func (pq *PiecesQueue) FailedPieceMessage() *util.PeerMessage {
 	pq.failedMu.Lock()
 	defer pq.failedMu.Unlock()
 

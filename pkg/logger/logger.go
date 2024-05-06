@@ -101,8 +101,12 @@ func newLogger(
 }
 
 // NewCommandLine will return logger configured for terminal.
-func NewCommandLine(levelString string, format string) (*zap.Logger, error) {
-	level, err := getZapLevel(levelString)
+func NewCommandLine(level string, format string) (*zap.Logger, error) {
+	if level == "silent" {
+		return zap.NewNop(), nil
+	}
+
+	zapLevel, err := getZapLevel(level)
 	if err != nil {
 		return nil, err
 	}
@@ -110,5 +114,5 @@ func NewCommandLine(levelString string, format string) (*zap.Logger, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newLogger(level, encoder), nil
+	return newLogger(zapLevel, encoder), nil
 }

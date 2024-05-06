@@ -13,8 +13,7 @@ import (
 	"time"
 
 	"github.com/anivanovic/gotit"
-
-	"github.com/anivanovic/gotit/pkg/torrent"
+	"github.com/anivanovic/gotit/pkg/peer"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -61,8 +60,8 @@ func (t *httpTracker) Url() string {
 
 func (t *httpTracker) Close() error { return nil }
 
-func (t *httpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, data *gotit.AnnounceData) ([]netip.AddrPort, error) {
-	q := t.buildQuery(torrent, data)
+func (t *httpTracker) Announce(ctx context.Context, torrentHash string, data *gotit.AnnounceData) ([]netip.AddrPort, error) {
+	q := t.buildQuery(torrentHash, data)
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s?%s", t.addr, q.Encode()), nil)
 	if err != nil {
 		return nil, err
@@ -96,10 +95,10 @@ func (t *httpTracker) Announce(ctx context.Context, torrent *torrent.Torrent, da
 	return t.readPeers(body)
 }
 
-func (t *httpTracker) buildQuery(torrent *torrent.Torrent, data *gotit.AnnounceData) *url.Values {
+func (t *httpTracker) buildQuery(torrentHash string, data *gotit.AnnounceData) *url.Values {
 	query := url.Values{}
-	query.Set("info_hash", string(torrent.Hash))
-	query.Set("peer_id", string(torrent.PeerId))
+	query.Set("info_hash", torrentHash)
+	query.Set("peer_id", string(peer.ClientId))
 	query.Set("port", strconv.Itoa(data.Port))
 	query.Set("downloaded", strconv.FormatUint(data.Downloaded, 10))
 	query.Set("uploaded", strconv.FormatUint(data.Uploaded, 10))
@@ -123,10 +122,12 @@ func (t *httpTracker) readPeers(res []byte) ([]netip.AddrPort, error) {
 	t.interval = time.Duration(announceResponse.Interval) * time.Second
 
 	if announceResponse.Peers != nil {
-		return t.parseBencodePeers(announceResponse.Peers), nil
+		p := t.parseBencodePeers(announceResponse.Peers)
+		return p, nil
 	}
 	if announceResponse.PeersCompact != nil {
-		return parseCompactPeers(announceResponse.PeersCompact), nil
+		p := parseCompactPeers(announceResponse.PeersCompact)
+		return p, nil
 	}
 	if announceResponse.PeersIpv6 != nil {
 		// TODO: parse ipv6 compact response
@@ -137,7 +138,8 @@ func (t *httpTracker) readPeers(res []byte) ([]netip.AddrPort, error) {
 
 func (t *httpTracker) parseBencodePeers(peers []gotit.AnnouncePeer) []netip.AddrPort {
 	ips := make([]netip.AddrPort, len(peers))
-	for _, p := range peers {
+	for i, p := range peers {
+		t.logger.Debug("got ip", zap.String("ip", p.Ip))
 		ip, err := netip.ParseAddr(p.Ip)
 		if err != nil {
 			t.logger.Error(
@@ -148,6 +150,8 @@ func (t *httpTracker) parseBencodePeers(peers []gotit.AnnouncePeer) []netip.Addr
 			)
 			continue
 		}
+		t.logger.Debug("parsed ip", zap.String("ip", ip.String()))
+		t.logger.Debug("got port", zap.String("port", p.Port))
 		port, err := strconv.ParseUint(p.Port, 10, 16)
 		if err != nil {
 			t.logger.Error(
@@ -156,7 +160,13 @@ func (t *httpTracker) parseBencodePeers(peers []gotit.AnnouncePeer) []netip.Addr
 			)
 			continue
 		}
-		ips = append(ips, netip.AddrPortFrom(ip, uint16(port)))
+		t.logger.Debug("parsed port", zap.Uint64("port", port))
+		ipAddr := netip.AddrPortFrom(ip, uint16(port))
+		if !ipAddr.IsValid() {
+			t.logger.Warn("invalid ip address", zap.String("ip", p.Ip))
+			continue
+		}
+		ips[i] = ipAddr
 	}
 
 	return ips
@@ -175,7 +185,11 @@ func parseCompactPeers(peers []byte) []netip.AddrPort {
 		addr := netip.AddrFrom4(ip)
 		port := binary.BigEndian.Uint16(peers[byteMask*read+4 : byteMask*read+6])
 		addrPort := netip.AddrPortFrom(addr, port)
-		ips = append(ips, addrPort)
+		if !addrPort.IsValid() {
+			fmt.Println("invalid addr port compact", addrPort.String())
+			continue
+		}
+		ips[read] = addrPort
 	}
 	return ips
 }

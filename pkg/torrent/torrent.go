@@ -2,13 +2,13 @@ package torrent
 
 import (
 	"bytes"
-	"crypto/rand"
-	"encoding/binary"
+	"crypto/sha1"
 	"math"
 	"os"
 	"path/filepath"
 	"sync"
 
+	"github.com/anivanovic/gotit/pkg/stats"
 	"github.com/tevino/abool/v2"
 
 	"github.com/bits-and-blooms/bitset"
@@ -19,12 +19,7 @@ import (
 	"github.com/anivanovic/gotit/pkg/util"
 )
 
-const BlockLength uint = 64 * 1024
-
-var (
-	BittorrentProto = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
-	clientIdPrefix  = [8]byte{'-', 'G', 'O', '0', '1', '0', '0', '-'}
-)
+const BlockLength uint = 128 * 1024
 
 type Torrent struct {
 	logger       *zap.Logger
@@ -41,7 +36,6 @@ type Torrent struct {
 	CreatedBy    string
 	Comment      string
 	IsDirectory  bool
-	PeerId       []byte
 
 	Metadata *bencode.Metainfo
 
@@ -64,8 +58,7 @@ func New(metainfo *bencode.Metainfo, downloadDir string, logger *zap.Logger) (*T
 		downloadedMu: &sync.Mutex{},
 		Metadata:     metainfo,
 	}
-	t.PeerId = createClientId()
-	t.logger.Debug("Created client id", zap.String("id", string(t.PeerId)))
+	t.logger.Debug("Created client id")
 	t.Name = metainfo.Info.Name
 	t.CreatedBy = metainfo.CreatedBy
 	t.CreationDate = metainfo.CreationDate
@@ -95,7 +88,7 @@ func New(metainfo *bencode.Metainfo, downloadDir string, logger *zap.Logger) (*T
 	t.Trackers = announceSet
 	t.IsDirectory = metainfo.Info.Length == 0
 
-	if t.IsDirectory {
+	if !t.IsDirectory {
 		t.Length = int(metainfo.Info.Length)
 	} else {
 		files := metainfo.Info.Files
@@ -114,28 +107,6 @@ func New(metainfo *bencode.Metainfo, downloadDir string, logger *zap.Logger) (*T
 	}
 
 	return t, nil
-}
-
-func (t *Torrent) CreateHandshake() []byte {
-	request := new(bytes.Buffer)
-	// 19 - as number of letters in protocol type string
-	binary.Write(request, binary.BigEndian, uint8(len(BittorrentProto)))
-	binary.Write(request, binary.BigEndian, BittorrentProto)
-	binary.Write(request, binary.BigEndian, uint64(0))
-	binary.Write(request, binary.BigEndian, t.Hash)
-	binary.Write(request, binary.BigEndian, t.PeerId)
-
-	return request.Bytes()
-}
-
-// implemented BEP20
-func createClientId() []byte {
-	peerId := make([]byte, 20)
-	copy(peerId, clientIdPrefix[:])
-
-	// create remaining random bytes
-	rand.Read(peerId[len(clientIdPrefix):])
-	return peerId
 }
 
 func (t *Torrent) SetDownloaded(pieceIndx uint) {
@@ -190,7 +161,15 @@ func (t *Torrent) initDownloadDir(root string) error {
 	return nil
 }
 
-func (t *Torrent) WritePiece(piecesCh <-chan *util.PeerMessage) {
+func (t Torrent) CheckPiece(data []byte, index int) bool {
+	hasher := sha1.New()
+	hasher.Write(data)
+	hash := hasher.Sum(nil)
+
+	return bytes.Equal(t.Pieces[index].sha1, hash)
+}
+
+func (t *Torrent) WritePiece(piecesCh <-chan *util.PeerMessage, stats *stats.Stats) {
 	writeFunc := func(msg *util.PeerMessage, piecePoss int) {
 		file := t.OsFiles[0]
 		file.WriteAt(msg.Data(), int64(piecePoss))
@@ -229,6 +208,7 @@ func (t *Torrent) WritePiece(piecesCh <-chan *util.PeerMessage) {
 
 	for msg := range piecesCh {
 		piecePoss := int(msg.Index())*t.PieceLength + int(msg.Offset())
+		stats.AddDownload(uint64(len(msg.Data())))
 
 		if (int(msg.Offset()) + int(BlockLength)) == t.PieceLength {
 			t.SetDownloaded(uint(msg.Index()))
@@ -249,4 +229,8 @@ func (t *Torrent) Close() error {
 		err = multierr.Append(err, f.Close())
 	}
 	return err
+}
+
+func (t *Torrent) EmptyBitset() *bitset.BitSet {
+	return bitset.New(uint(t.PieceLength))
 }

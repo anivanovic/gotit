@@ -3,7 +3,6 @@ package download
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/netip"
 	"sync"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/anivanovic/gotit"
 
 	"github.com/anivanovic/gotit/pkg/peer"
+	"github.com/anivanovic/gotit/pkg/stats"
 	"github.com/anivanovic/gotit/pkg/torrent"
 	"github.com/anivanovic/gotit/pkg/tracker"
 	"github.com/anivanovic/gotit/pkg/util"
@@ -24,8 +24,9 @@ type Manager struct {
 	peerNum    int
 	listenPort int
 
-	torrent       *torrent.Torrent
-	torrentStatus Stats
+	torrent         *torrent.Torrent
+	torrentStatus   *stats.Stats
+	progressPrinter *stats.ProgressPrinter
 
 	poolMu   sync.Mutex
 	peerPool map[string]*peer.Peer
@@ -35,19 +36,19 @@ type Manager struct {
 }
 
 func NewMng(torrent *torrent.Torrent, logger *zap.Logger, peerNum, listenPort int) *Manager {
+	s := stats.NewStats(uint64(torrent.Length))
+	pp := stats.NewProgressPrinter(s)
 	return &Manager{
-		logger:     logger,
-		torrent:    torrent,
-		peerPool:   make(map[string]*peer.Peer, 100),
-		peerNum:    peerNum,
-		listenPort: listenPort,
-		poolMu:     sync.Mutex{},
-		wg:         &sync.WaitGroup{},
-		torrentStatus: Stats{
-			start:    time.Now(),
-			download: 0,
-			upload:   0,
-			left:     uint64(torrent.Length)}}
+		logger:          logger,
+		torrent:         torrent,
+		peerPool:        make(map[string]*peer.Peer, 100),
+		peerNum:         peerNum,
+		listenPort:      listenPort,
+		poolMu:          sync.Mutex{},
+		wg:              &sync.WaitGroup{},
+		torrentStatus:   s,
+		progressPrinter: pp,
+	}
 }
 
 func (m *Manager) Download(ctx context.Context) error {
@@ -58,7 +59,7 @@ func (m *Manager) Download(ctx context.Context) error {
 	m.initStatisticsPrinting(ctx)
 	m.getIps(ctx, pieceCh)
 
-	go m.torrent.WritePiece(pieceCh)
+	go m.torrent.WritePiece(pieceCh, m.torrentStatus)
 
 	m.waitPeers()
 	<-ctx.Done()
@@ -121,17 +122,17 @@ func (m *Manager) announceToTracker(ctx context.Context, t gotit.Tracker) ([]net
 		func() error {
 			var err error
 			announceData := gotit.AnnounceData{
-				Downloaded: m.torrentStatus.download,
-				Uploaded:   m.torrentStatus.upload,
-				Left:       m.torrentStatus.left,
+				Downloaded: m.torrentStatus.Download(),
+				Uploaded:   m.torrentStatus.Upload(),
+				Left:       m.torrentStatus.Left(),
 				Port:       m.listenPort,
 			}
-			ips, err = t.Announce(ctx, m.torrent, &announceData)
+			ips, err = t.Announce(ctx, string(m.torrent.Hash), &announceData)
 			return err
 		},
 		retry.LastErrorOnly(true),
 		retry.OnRetry(func(n uint, err error) {
-			m.logger.Warn("failed tracker announce",
+			m.logger.Debug("failed tracker announce",
 				zap.Error(err),
 				zap.String("url", t.Url()),
 				zap.Uint("attempt", n+1))
@@ -147,14 +148,14 @@ func (m *Manager) announceToTracker(ctx context.Context, t gotit.Tracker) ([]net
 func (m *Manager) startPeerDownload(ctx context.Context, peer *peer.Peer) {
 	err := retry.Do(
 		func() error {
-			return peer.Announce(ctx, m.torrent)
+			return peer.Announce(m.torrent)
 		},
 		retry.LastErrorOnly(true),
 		retry.OnRetry(func(n uint, err error) {
-			m.logger.Warn("failed peer announce. attempt",
-				zap.Error(err),
-				zap.String("ip", peer.AddrPort.String()),
-				zap.Uint("attempt", n+1))
+			m.logger.Debug("failed peer announce",
+				zap.Uint("attempt", n+1),
+				zap.Stringer("ip", peer.AddrPort),
+				zap.Error(err))
 		}),
 		retry.Attempts(5),
 		retry.Delay(500),
@@ -163,9 +164,10 @@ func (m *Manager) startPeerDownload(ctx context.Context, peer *peer.Peer) {
 	)
 
 	if err != nil {
-		m.logger.Warn("error announcing to peer",
-			zap.String("ip", peer.AddrPort.String()),
+		m.logger.Error("error announcing to peer",
+			zap.Stringer("ip", peer.AddrPort),
 			zap.Error(err))
+		m.torrentStatus.RemovePeer()
 		return
 	}
 
@@ -182,12 +184,8 @@ func (m *Manager) initStatisticsPrinting(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(time.Second * 10):
-				fmt.Printf("\rDownloaded: %d, Left: %d, Peers: %d - Speed %f",
-					m.torrentStatus.Download()/mb,
-					m.torrentStatus.Left()/mb,
-					len(m.peerPool),
-					m.torrentStatus.Speed())
+			case <-time.After(time.Second * 1):
+				m.progressPrinter.Print()
 			}
 		}
 	}()
@@ -208,6 +206,7 @@ func (m *Manager) Stop() {
 		}
 	}
 	m.peerPool = nil
+	m.progressPrinter.Close()
 }
 
 func (m *Manager) waitPeers() {
@@ -223,6 +222,7 @@ func (m *Manager) AddPeer(peer *peer.Peer) bool {
 	}
 
 	m.peerPool[peer.AddrPort.String()] = peer
+	m.torrentStatus.AddPeer()
 	return true
 }
 

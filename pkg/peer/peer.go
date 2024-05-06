@@ -1,405 +1,338 @@
 package peer
 
-//
-//import (
-//	"bytes"
-//	"context"
-//	"encoding/binary"
-//	"errors"
-//	"fmt"
-//	"math/rand"
-//	"net/netip"
-//	"time"
-//
-//	"github.com/anivanovic/gotit/pkg/gotitnet"
-//	"github.com/anivanovic/gotit/pkg/torrent"
-//	"github.com/anivanovic/gotit/pkg/util"
-//
-//	"github.com/bits-and-blooms/bitset"
-//	"go.uber.org/zap"
-//)
-//
-//const (
-//	choke         = iota // 0
-//	unchoke              // 1
-//	interested           // 2
-//	notInterested        // 3
-//	have                 // 4
-//	bitfield             // 5
-//	request              // 6
-//	piece                // 7
-//	cancel               // 8
-//	keepalive     = 99
-//)
-//
-//var log = zap.L()
-//
-//var ErrHandshakeInvalid = errors.New("peer handshake invalid")
-//
-//type Peer struct {
-//	Id           int
-//	AddrPort     netip.AddrPort
-//	conn         *gotitnet.TimeoutConn
-//	Bitset       *bitset.BitSet
-//	PeerStatus   *PeerStatus
-//	ClientStatus *PeerStatus
-//	torrent      *torrent.Torrent
-//	lastMsgSent  time.Time
-//	logger       *zap.Logger
-//	piecesQueue  *torrent.PiecesQueue
-//
-//	blockIndx uint
-//	pieceIndx uint
-//
-//	writterCh chan<- *util.PeerMessage
-//	doneCh    chan<- struct{}
-//}
-//
-//type PeerStatus struct {
-//	Choking    bool
-//	Interested bool
-//	Valid      bool
-//}
-//
-//var keepalivePeerMessage = &util.PeerMessage{
-//	Size:    0,
-//	Type:    keepalive,
-//	Payload: nil,
-//}
-//
-//func NewPeerMessage(data []byte) *util.PeerMessage {
-//	if len(data) == 0 { // keepalive message
-//		return keepalivePeerMessage
-//	}
-//
-//	return &util.PeerMessage{
-//		Size:    uint32(len(data)),
-//		Type:    data[0],
-//		Payload: data[1:],
-//	}
-//}
-//
-//func createNotInterestedMessage() []byte {
-//	return createSignalMessage(notInterested)
-//}
-//
-//func createInterestedMessage() []byte {
-//	return createSignalMessage(interested)
-//}
-//
-//func createChokeMessage() []byte {
-//	return createSignalMessage(choke)
-//}
-//
-//func createUnchokeMessage() []byte {
-//	return createSignalMessage(unchoke)
-//}
-//
-//func createSignalMessage(code int) []byte {
-//	message := new(bytes.Buffer)
-//	binary.Write(message, binary.BigEndian, uint32(1))
-//	binary.Write(message, binary.BigEndian, uint8(code))
-//
-//	return message.Bytes()
-//}
-//
-//func createBitfieldMessage(peer *Peer) []byte {
-//	message := new(bytes.Buffer)
-//	binary.Write(message, binary.BigEndian, peer.Bitset.Len())
-//	binary.Write(message, binary.BigEndian, uint8(bitfield))
-//	binary.Write(message, binary.BigEndian, peer.Bitset.Bytes())
-//
-//	return message.Bytes()
-//}
-//
-//func createHaveMessage(pieceIdx int) []byte {
-//	message := new(bytes.Buffer)
-//	binary.Write(message, binary.BigEndian, uint32(5))
-//	binary.Write(message, binary.BigEndian, uint8(have))
-//	binary.Write(message, binary.BigEndian, uint32(pieceIdx))
-//
-//	return message.Bytes()
-//}
-//
-//func createCancleMessage(pieceIdx int) []byte {
-//	message := new(bytes.Buffer)
-//	binary.Write(message, binary.BigEndian, uint32(5))
-//	binary.Write(message, binary.BigEndian, uint8(cancel))
-//	binary.Write(message, binary.BigEndian, uint32(pieceIdx))
-//
-//	return message.Bytes()
-//}
-//
-//func checkHandshake(handshake, hash, peerId []byte) bool {
-//	if len(handshake) < 68 {
-//		return false
-//	}
-//
-//	ressCode := uint8(handshake[0])
-//	protocolSignature := string(handshake[1:20])
-//	reservedBytes := binary.BigEndian.Uint64(handshake[20:28])
-//	sentHash := handshake[28:48]
-//	sentPeerId := handshake[48:68]
-//	log.Debug("Peer handshake message",
-//		zap.Uint8("resCode", ressCode),
-//		zap.String("protocol signature", protocolSignature),
-//		zap.Binary("hash", sentHash),
-//		zap.Binary("peerId", sentPeerId))
-//
-//	return ressCode != 19 ||
-//		protocolSignature != string(torrent.BittorrentProto[:]) ||
-//		reservedBytes != 0 ||
-//		!bytes.Equal(sentHash, hash) ||
-//		!bytes.Equal(sentPeerId, peerId)
-//}
-//
-//func (peer *Peer) createPieceMessage() []byte {
-//	beginOffset := peer.blockIndx * torrent.BlockLength
-//	message := &bytes.Buffer{}
-//	binary.Write(message, binary.BigEndian, uint32(13))
-//	binary.Write(message, binary.BigEndian, uint8(request))
-//	binary.Write(message, binary.BigEndian, uint32(peer.pieceIndx))
-//	binary.Write(message, binary.BigEndian, uint32(beginOffset))
-//	binary.Write(message, binary.BigEndian, uint32(torrent.BlockLength))
-//
-//	peer.logger.Info("created piece request",
-//		zap.Uint("piece", peer.pieceIndx),
-//		zap.Uint("offset", beginOffset),
-//		zap.Uint("length", torrent.BlockLength),
-//	)
-//
-//	peer.blockIndx++
-//
-//	return message.Bytes()
-//}
-//
-//func newPeerStatus() *PeerStatus {
-//	return &PeerStatus{true, false, true}
-//}
-//
-//func NewPeer(
-//	ip netip.AddrPort,
-//	torrent *torrent.Torrent,
-//	piecesQueue *torrent.PiecesQueue,
-//	writterCh chan<- *util.PeerMessage,
-//	doneCh chan<- struct{},
-//) *Peer {
-//	return &Peer{
-//		Id:           rand.Int(),
-//		AddrPort:     ip,
-//		conn:         nil,
-//		PeerStatus:   newPeerStatus(),
-//		ClientStatus: newPeerStatus(),
-//		torrent:      torrent,
-//		lastMsgSent:  time.Now(),
-//		logger:       log.With(zap.String("ip", ip.String())),
-//		blockIndx:    uint(0),
-//		piecesQueue:  piecesQueue,
-//		writterCh:    writterCh,
-//		doneCh:       doneCh,
-//	}
-//}
-//
-//func (peer *Peer) connect() error {
-//	var err error
-//	peer.lastMsgSent = time.Now()
-//	peer.conn, err = gotitnet.NewTimeoutConn("tcp", peer.AddrPort.String(), gotitnet.PeerTimeout)
-//	return err
-//}
-//
-//func (peer *Peer) Announce(ctx context.Context, torrent *torrent.Torrent) error {
-//	err := peer.connect()
-//	if err != nil {
-//		return fmt.Errorf("peer connect: %w", err)
-//	}
-//
-//	peer.sendMessage(ctx, torrent.CreateHandshake())
-//	response, err := peer.conn.ReadPeerHandshake(ctx)
-//	if err != nil {
-//		return err
-//	}
-//
-//	if valid := checkHandshake(response, torrent.Hash, torrent.PeerId); !valid {
-//		return ErrHandshakeInvalid
-//	}
-//
-//	peer.logger.Info("announce to peer successful")
-//	return nil
-//}
-//
-//// Run communicates with remote peer and downloads torrent pieces.
-//func (peer *Peer) Run(ctx context.Context) {
-//	var requestMsg []byte
-//	sentPieceMsg := false
-//	for {
-//		select {
-//		case <-ctx.Done():
-//			return
-//		default:
-//			// continue the loop
-//		}
-//
-//		peer.checkKeepAlive(ctx)
-//
-//		if peer.PeerStatus.Choking {
-//			peer.ClientStatus.Interested = true
-//			interestedM := createInterestedMessage()
-//			peer.logger.Debug("Sending interested message")
-//
-//			_, err := peer.sendMessage(ctx, interestedM)
-//			if err != nil {
-//				return
-//			}
-//		}
-//
-//		if !peer.PeerStatus.Choking && !sentPieceMsg {
-//			if requestMsg == nil {
-//				requestMsg = peer.nextRequestMessage(peer.torrent)
-//			}
-//
-//			if requestMsg == nil && peer.torrent.Done() {
-//				peer.doneCh <- struct{}{}
-//				return
-//			}
-//
-//			if requestMsg == nil {
-//				select {
-//				case <-time.After(time.Second * 10):
-//					continue
-//				case <-ctx.Done():
-//					return
-//				}
-//			}
-//
-//			if _, err := peer.sendMessage(ctx, requestMsg); err != nil {
-//				peer.logger.
-//					Warn("error sending piece. sleeping 5 seconds",
-//						zap.Error(err))
-//				time.Sleep(time.Second * 5)
-//				continue
-//			}
-//			sentPieceMsg = true
-//		}
-//
-//		response, err := peer.conn.ReadPeerMessage(ctx)
-//		if err != nil {
-//			if sentPieceMsg {
-//				peer.piecesQueue.RequestFailed(requestMsg)
-//			}
-//			return
-//		}
-//		if sentPieceMsg {
-//			requestMsg = nil
-//			sentPieceMsg = false
-//		}
-//
-//		peer.handlePeerMessage(NewPeerMessage(response))
-//	}
-//}
-//
-//func (peer *Peer) nextRequestMessage(torrent *torrent.Torrent) []byte {
-//	if peer.blockIndx >= uint(torrent.BlockNum()) {
-//		// when finished with piece download check if we have failed
-//		// piece requests
-//		if req := peer.piecesQueue.FailedPieceMessage(); req != nil {
-//			return req
-//		}
-//
-//		indx, found := torrent.CreateNextRequestMessage(peer.Bitset)
-//		if !found {
-//			// we do not have any piece to request from the peer
-//			return nil
-//		}
-//
-//		peer.blockIndx = 0
-//		peer.pieceIndx = indx
-//	}
-//
-//	return peer.createPieceMessage()
-//}
-//
-//func (peer *Peer) checkKeepAlive(ctx context.Context) {
-//	if time.Since(peer.lastMsgSent).Minutes() >= 1.9 {
-//		peer.logger.Debug("Sending keep alive message")
-//		peer.sendMessage(ctx, make([]byte, 4)) // send 0
-//		peer.updateLastMsgSent()
-//	}
-//}
-//
-//func (peer *Peer) updateLastMsgSent() {
-//	peer.lastMsgSent = time.Now()
-//}
-//
-//func (peer *Peer) handlePeerMessage(message *util.PeerMessage) {
-//	// if keepalive wait 2 minutes and try again
-//	if message.Size == 0 {
-//		peer.logger.Debug("Peer sent keepalive")
-//		return
-//	}
-//
-//	switch message.Type {
-//	case bitfield:
-//		peer.logger.Info("Peer sent bitfield message")
-//		peer.Bitset = createBitset(message.Payload)
-//	case have:
-//		peer.logger.Debug("Peer sent have message")
-//		indx := uint(binary.BigEndian.Uint32(message.Payload))
-//		peer.Bitset.Set(indx)
-//	case interested:
-//		peer.logger.Debug("Peer sent interested message")
-//		peer.PeerStatus.Interested = true
-//		// return choke or unchoke
-//	case notInterested:
-//		peer.logger.Debug("Peer sent notInterested message")
-//		peer.PeerStatus.Interested = false
-//		// return choke
-//	case choke:
-//		peer.logger.Debug("Peer sent choke message")
-//		peer.PeerStatus.Choking = true
-//		time.Sleep(time.Second * 30)
-//	case unchoke:
-//		peer.logger.Debug("Peer sent unchoke message")
-//		peer.PeerStatus.Choking = false
-//	case request:
-//		peer.logger.Debug("Peer sent request message")
-//	case piece:
-//		peer.logger.Debug("Peer sent piece message")
-//		//peer.mng.UpdateStatus(uint64(torrent.BlockLength), 0)
-//		peer.writterCh <- message
-//	case cancel:
-//		peer.logger.Debug("Peer sent cancle message")
-//	default:
-//		peer.logger.Sugar().Debugf("Peer sent wrong code %d", message.Type)
-//	}
-//}
-//
-//func createBitset(payload []byte) *bitset.BitSet {
-//	set := make([]uint64, 0)
-//	i := 0
-//	lenPayload := len(payload)
-//	for i+8 < lenPayload {
-//		data := binary.BigEndian.Uint64(payload[i : i+8])
-//		set = append(set, data)
-//		i += 8
-//	}
-//	if i < lenPayload {
-//		n := lenPayload - i
-//		missing := 8 - n
-//		data := payload[i:lenPayload]
-//		for i := 0; i < missing; i++ {
-//			data = append(data, 0)
-//		}
-//		last := binary.BigEndian.Uint64(data)
-//		set = append(set, last)
-//	}
-//
-//	return bitset.From(set)
-//}
-//
-//func (peer *Peer) sendMessage(ctx context.Context, message []byte) (int, error) {
-//	n, err := peer.conn.Write(ctx, message)
-//	peer.logger.Debug("sendMessage to peer",
-//		zap.Int("written", n),
-//		zap.Error(err))
-//	return n, err
-//}
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"math/rand"
+	"net/netip"
+	"time"
+
+	"github.com/anivanovic/gotit/pkg/gotitnet"
+	"github.com/anivanovic/gotit/pkg/torrent"
+	"github.com/anivanovic/gotit/pkg/util"
+
+	"github.com/bits-and-blooms/bitset"
+	"go.uber.org/zap"
+)
+
+var (
+	bittorrentProto = [19]byte{'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
+	clientIdPrefix  = [8]byte{'-', 'G', 'O', '0', '1', '0', '0', '-'}
+)
+
+type PiecesSource interface {
+	Next(bitset *bitset.BitSet) (uint, bool)
+}
+
+type PieceChecker interface {
+	CheckPiece([]byte, int) bool
+}
+
+type Peer struct {
+	Id           int
+	AddrPort     netip.AddrPort
+	conn         *gotitnet.TimeoutConn
+	Bitset       *bitset.BitSet
+	PeerStatus   *Status
+	ClientStatus *Status
+	lastMsgSent  time.Time
+	piecesQueue  *torrent.PiecesQueue
+	piecesSource PiecesSource
+	pieceChecker PieceChecker
+
+	torrent *torrent.Torrent
+
+	logger *zap.Logger
+
+	blockIdx uint
+	pieceIdx uint
+	blockNum uint
+
+	writeCh chan<- *util.PeerMessage
+}
+
+type Status struct {
+	Choked     bool
+	Interested bool
+	Valid      bool
+}
+
+func checkHandshake(handshake, hash, peerId []byte) bool {
+	if len(handshake) < 68 {
+		return false
+	}
+
+	ressCode := handshake[0]
+	protocolSignature := string(handshake[1:20])
+	reservedBytes := binary.BigEndian.Uint64(handshake[20:28])
+	sentHash := handshake[28:48]
+	sentPeerId := handshake[48:68]
+
+	return ressCode != 19 ||
+		protocolSignature != string(bittorrentProto[:]) ||
+		reservedBytes != 0 ||
+		!bytes.Equal(sentHash, hash) ||
+		!bytes.Equal(sentPeerId, peerId)
+}
+
+func (p *Peer) createPieceMessage() *util.PeerMessage {
+	beginOffset := p.blockIdx * torrent.BlockLength
+	msg := util.CreatePieceMessage(uint32(p.pieceIdx), uint32(beginOffset), uint32(torrent.BlockLength))
+
+	p.logger.Debug("created piece request",
+		zap.Uint("piece", p.pieceIdx),
+		zap.Uint("offset", beginOffset),
+		zap.Uint("length", torrent.BlockLength),
+	)
+
+	p.blockIdx++
+	return msg
+}
+
+func newPeerStatus() *Status {
+	return &Status{true, false, true}
+}
+
+func NewPeer(
+	ip netip.AddrPort,
+	torrent *torrent.Torrent,
+	piecesQueue *torrent.PiecesQueue,
+	writeCh chan<- *util.PeerMessage,
+	logger *zap.Logger,
+) *Peer {
+	return &Peer{
+		Id:           rand.Int(),
+		AddrPort:     ip,
+		conn:         nil,
+		PeerStatus:   newPeerStatus(),
+		ClientStatus: newPeerStatus(),
+		lastMsgSent:  time.Now(),
+		logger:       logger.With(zap.String("ip", ip.String())),
+		blockIdx:     uint(0),
+		piecesQueue:  piecesQueue,
+		writeCh:      writeCh,
+		piecesSource: torrent,
+		Bitset:       torrent.EmptyBitset(),
+	}
+}
+
+func (p *Peer) connect() error {
+	var err error
+	p.conn, err = gotitnet.NewTimeoutConn("tcp", p.AddrPort.String(), gotitnet.PeerTimeout)
+	if err != nil {
+		return err
+	}
+
+	p.lastMsgSent = time.Now()
+	return nil
+}
+
+func (p *Peer) Announce(torrent *torrent.Torrent) error {
+	err := p.connect()
+	if err != nil {
+		return fmt.Errorf("peer connect: %w", err)
+	}
+
+	if _, err := p.send(createHandshake(torrent.Hash)); err != nil {
+		return fmt.Errorf("peer handshake: %w", err)
+	}
+
+	response, err := p.conn.ReadPeerHandshake()
+	if err != nil {
+		return err
+	}
+
+	if valid := checkHandshake(response, torrent.Hash, ClientId); !valid {
+		return errors.New("peer handshake invalid")
+	}
+
+	p.logger.Info("announce to peer successful")
+	return nil
+}
+
+// Run communicates with remote peer and downloads torrent pieces.
+func (p *Peer) Run(ctx context.Context) {
+	var requestMsg *util.PeerMessage
+	sentPieceMsg := false
+
+	p.SendInterested()
+	p.SendUnchoke()
+
+	for {
+		if !p.ClientStatus.Choked && !sentPieceMsg {
+			requestMsg = p.nextRequestMessage()
+			if requestMsg == nil {
+				time.Sleep(time.Second * 2)
+				continue
+			}
+
+			if _, err := p.sendMessage(requestMsg); err != nil {
+				p.logger.
+					Debug("error sending piece. sleeping 5 seconds",
+						zap.Error(err))
+				p.piecesQueue.RequestFailed(requestMsg)
+				continue
+			}
+
+			sentPieceMsg = true
+		}
+
+		response, err := p.conn.ReadPeerMessage()
+		if err != nil {
+			if sentPieceMsg {
+				p.piecesQueue.RequestFailed(requestMsg)
+				sentPieceMsg = false
+			}
+
+			continue
+		}
+
+		p.handlePeerMessage(util.NewPeerMessage(response))
+	}
+}
+
+func (p *Peer) nextRequestMessage() *util.PeerMessage {
+	if p.blockIdx >= p.blockNum {
+		// when finished with piece download check if we have failed
+		// piece requests
+		if req := p.piecesQueue.FailedPieceMessage(); req != nil {
+			return req
+		}
+
+		indx, found := p.piecesSource.Next(p.Bitset)
+		if !found {
+			// we do not have any piece to request from the peer
+			return nil
+		}
+
+		p.blockIdx = 0
+		p.pieceIdx = indx
+	}
+
+	return p.createPieceMessage()
+}
+
+func (p *Peer) Close() error {
+	return p.conn.Close()
+}
+
+func (p *Peer) checkKeepAlive() {
+	if time.Since(p.lastMsgSent).Minutes() >= 1.9 {
+		p.logger.Debug("Sending keep alive message")
+		p.sendMessage(util.KeepalivePeerMessage)
+		p.updateLastMsgSent()
+	}
+}
+
+func (p *Peer) updateLastMsgSent() {
+	p.lastMsgSent = time.Now()
+}
+
+func (p *Peer) handlePeerMessage(message *util.PeerMessage) {
+	// if keepalive wait 2 minutes and try again
+	if message.Type == util.KeepaliveMessageType {
+		p.logger.Debug("Peer sent keepalive")
+		return
+	}
+
+	switch message.Type {
+	case util.BitfieldMessageType:
+		p.logger.Debug("Peer sent bitfield message", zap.Int("peerId", p.Id))
+		p.Bitset = message.Bitfield()
+	case util.HaveMessageType:
+		p.logger.Debug("Peer sent have message", zap.Int("peerId", p.Id))
+		p.Bitset.Set(uint(message.Index()))
+	case util.InterestedMessageType:
+		p.logger.Debug("Peer sent interested message", zap.Int("peerId", p.Id))
+		p.PeerStatus.Interested = true
+		// return choke or unchoke
+	case util.NotInterestedMessageType:
+		p.logger.Debug("Peer sent notInterested message", zap.Int("peerId", p.Id))
+		p.PeerStatus.Interested = false
+		// return choke
+	case util.ChokeMessageType:
+		p.logger.Debug("Peer sent choke message", zap.Int("peerId", p.Id))
+		p.ClientStatus.Choked = true
+	case util.UnchokeMessageType:
+		p.logger.Debug("Peer sent unchoke message", zap.Int("peerId", p.Id))
+		p.ClientStatus.Choked = false
+	case util.RequestMessageType:
+		p.logger.Debug("Peer sent request message", zap.Int("peerId", p.Id))
+	case util.PieceMessageType:
+		p.logger.Debug("Peer sent piece message", zap.Int("peerId", p.Id))
+		p.handlePieceMessage(message)
+	case util.CancelMessageType:
+		p.logger.Debug("Peer sent cancel message")
+	default:
+		p.logger.Error("peer sent unrecognized message",
+			zap.Int("peerId", p.Id),
+			zap.Int("msgCode", int(message.Type)))
+	}
+}
+
+func (p *Peer) sendMessage(msg *util.PeerMessage) (int, error) {
+	return p.conn.WriteMsg(msg)
+}
+
+func (p *Peer) send(data []byte) (int, error) {
+	return p.conn.Write(data)
+}
+
+func (p *Peer) SendUnchoke() {
+	if !p.PeerStatus.Interested {
+		return
+	}
+
+	if _, err := p.sendMessage(util.CreateUnchokeMessage()); err != nil {
+		return
+	}
+	p.PeerStatus.Choked = false
+}
+
+func (p *Peer) SendInterested() {
+	p.sendMessage(util.CreateInterestedMessage())
+}
+
+func (p *Peer) handlePieceMessage(message *util.PeerMessage) {
+	if !p.pieceChecker.CheckPiece(message.Data(), int(message.Index())) {
+		p.logger.Error("Discarding corrupted piece. Sha1 check failed.", zap.Uint32("index", message.Index()))
+		return
+	}
+
+	p.writeCh <- message
+	p.Bitset.Set(uint(message.Index()))
+}
+
+func sleep(ctx context.Context, duration time.Duration) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(duration):
+	}
+}
+
+func createHandshake(hash []byte) []byte {
+	buf := new(bytes.Buffer)
+
+	// 19 - as number of letters in protocol type string
+	_ = binary.Write(buf, binary.BigEndian, uint8(len(bittorrentProto)))
+	_ = binary.Write(buf, binary.BigEndian, bittorrentProto)
+	_ = binary.Write(buf, binary.BigEndian, uint64(0))
+	_ = binary.Write(buf, binary.BigEndian, hash)
+	_ = binary.Write(buf, binary.BigEndian, ClientId)
+
+	return buf.Bytes()
+}
+
+// implemented BEP20
+var ClientId = createClientId()
+
+func createClientId() []byte {
+	peerId := make([]byte, 20)
+	copy(peerId, clientIdPrefix[:])
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	r.Read(peerId[len(clientIdPrefix):])
+	return peerId
+}

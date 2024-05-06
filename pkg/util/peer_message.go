@@ -3,17 +3,14 @@ package util
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 
 	"github.com/bits-and-blooms/bitset"
 )
 
-type MessageType int
+type MessageType uint8
 
 const (
-	// KeepaliveMessageType has only length without type.
-	// This is fake type which is never actually used.
-	KeepaliveMessageType MessageType = 99
-
 	ChokeMessageType MessageType = iota
 	UnchokeMessageType
 	InterestedMessageType
@@ -23,31 +20,105 @@ const (
 	RequestMessageType
 	PieceMessageType
 	CancelMessageType
+
+	// KeepaliveMessageType has only length without type.
+	// This is fake type which is never actually used.
+	KeepaliveMessageType MessageType = 99
 )
 
 type PeerMessage struct {
-	len    int
-	Type   MessageType
-	index  uint32
-	offset uint32
-	size   int
-
+	len     uint32
+	Type    MessageType
 	payload []byte
+
+	index       uint32
+	offset      uint32
+	blockLength uint32
 }
 
-func (m *PeerMessage) Index() uint32 {
+type Message interface {
+	Index() uint32
+	Offset() uint32
+	Payload() []byte
+	Type() MessageType
+}
+
+var KeepalivePeerMessage = &PeerMessage{
+	len:  0,
+	Type: KeepaliveMessageType,
+}
+
+// NewPeerMessage constructs PeerMessage from single message read from network
+// connection. Data byte array should not contain length parameter as first byte.
+func NewPeerMessage(data []byte) *PeerMessage {
+	if len(data) == 0 {
+		return KeepalivePeerMessage
+	}
+
+	msg := &PeerMessage{
+		len:     uint32(len(data)),
+		Type:    MessageType(data[0]),
+		payload: data[1:],
+	}
+	data = msg.payload
+
+	switch msg.Type {
+	case HaveMessageType:
+		msg.index = binary.BigEndian.Uint32(data[:4])
+	case RequestMessageType, CancelMessageType:
+		msg.index = binary.BigEndian.Uint32(msg.payload[:4])
+		msg.offset = binary.BigEndian.Uint32(msg.payload[4:8])
+		msg.blockLength = binary.BigEndian.Uint32(msg.payload[8:12])
+	case PieceMessageType:
+		msg.index = binary.BigEndian.Uint32(msg.payload[:4])
+		msg.offset = binary.BigEndian.Uint32(msg.payload[4:8])
+
+	default:
+		// no op
+	}
+
+	return msg
+}
+
+func (m PeerMessage) Send(w io.Writer) (int, error) {
+	// TODO: cache buffer object in a pool
+	buf := &bytes.Buffer{}
+	writeBigEndian(buf, m.len)
+	if m.Type == KeepaliveMessageType {
+		return w.Write(buf.Bytes())
+	}
+
+	writeBigEndian(buf, m.Type)
+	buf.Write(m.payload)
+
+	return w.Write(buf.Bytes())
+}
+
+func (m PeerMessage) Index() uint32 {
 	return m.index
 }
 
-func (m *PeerMessage) Offset() uint32 {
+func (m PeerMessage) Offset() uint32 {
 	return m.offset
 }
 
-func (m *PeerMessage) Data() []byte {
-	return m.payload
+func (m PeerMessage) BlockLength() uint32 {
+	return m.blockLength
 }
 
-func (m *PeerMessage) Bitfield() *bitset.BitSet {
+func (m PeerMessage) Data() []byte {
+	if m.Type != PieceMessageType {
+		return nil
+	}
+
+	return m.payload[8:]
+}
+
+func (m PeerMessage) Bitfield() *bitset.BitSet {
+	if m.Type != BitfieldMessageType {
+		return nil
+	}
+
 	return createBitset(m.payload)
 }
 
@@ -74,100 +145,92 @@ func createBitset(payload []byte) *bitset.BitSet {
 	return bitset.From(set)
 }
 
-var keepalivePeerMessage = &PeerMessage{
-	len:  0,
-	Type: KeepaliveMessageType,
+func createNotInterestedMessage() *PeerMessage {
+	return createSignalMessage(NotInterestedMessageType)
 }
 
-// NewPeerMessage constructs PeerMessage from single message read from network
-// connection. Data byte array should not contain length parameter as first byte.
-func NewPeerMessage(data []byte) *PeerMessage {
-	if len(data) == 0 { // keepalive message
-		return keepalivePeerMessage
-	}
-	msg := &PeerMessage{
-		Type: MessageType(data[0]),
-	}
-	data = data[1:]
-	msg.len = len(data)
+func CreateInterestedMessage() *PeerMessage {
+	return createSignalMessage(InterestedMessageType)
+}
 
-	switch msg.Type {
-	case HaveMessageType:
-		msg.index = binary.BigEndian.Uint32(data[:4])
-	case RequestMessageType, CancelMessageType:
-		msg.index = binary.BigEndian.Uint32(data[:4])
-		msg.offset = binary.BigEndian.Uint32(data[4:8])
-		msg.size = int(data[2])
-	case PieceMessageType:
-		msg.index = binary.BigEndian.Uint32(data[:4])
-		msg.offset = binary.BigEndian.Uint32(data[4:8])
-		msg.payload = data[8:]
-		msg.size = len(msg.payload)
-	case BitfieldMessageType:
-		msg.payload = data
+func CreateChokeMessage() *PeerMessage {
+	return createSignalMessage(ChokeMessageType)
+}
+
+func CreateUnchokeMessage() *PeerMessage {
+	return createSignalMessage(UnchokeMessageType)
+}
+
+func createSignalMessage(code MessageType) *PeerMessage {
+	return &PeerMessage{
+		len:  1,
+		Type: code,
+	}
+}
+
+func createBitfieldMessage(b *bitset.BitSet) *PeerMessage {
+	buf := &bytes.Buffer{}
+	writeBigEndian(buf, uint32(b.Len()+1))
+	writeBigEndian(buf, BitfieldMessageType)
+	writeBigEndian(buf, b.Bytes())
+
+	msg := &PeerMessage{
+		len:     uint32(b.Len() + 1),
+		Type:    BitfieldMessageType,
+		payload: buf.Bytes(),
 	}
 
 	return msg
 }
 
-func createNotInterestedMessage() []byte {
-	return createSignalMessage(NotInterestedMessageType)
+func createHaveMessage(index uint32) *PeerMessage {
+	payload := make([]byte, 4)
+	binary.BigEndian.PutUint32(payload, index)
+
+	msg := &PeerMessage{
+		len:     5,
+		Type:    HaveMessageType,
+		payload: payload,
+	}
+
+	return msg
 }
 
-func CreateInterestedMessage() []byte {
-	return createSignalMessage(InterestedMessageType)
+func createCancelMessage(index, offset, blockLength uint32) *PeerMessage {
+	payload := make([]byte, 12)
+	binary.BigEndian.PutUint32(payload, index)
+	binary.BigEndian.PutUint32(payload, offset)
+	binary.BigEndian.PutUint32(payload, blockLength)
+
+	msg := &PeerMessage{
+		len:         13,
+		Type:        CancelMessageType,
+		payload:     payload,
+		index:       index,
+		offset:      offset,
+		blockLength: blockLength,
+	}
+
+	return msg
 }
 
-func createChokeMessage() []byte {
-	return createSignalMessage(ChokeMessageType)
+func CreatePieceMessage(index, offset, blockLength uint32) *PeerMessage {
+	payload := make([]byte, 12)
+	binary.BigEndian.PutUint32(payload, index)
+	binary.BigEndian.PutUint32(payload, offset)
+	binary.BigEndian.PutUint32(payload, blockLength)
+
+	msg := PeerMessage{
+		len:         13,
+		Type:        RequestMessageType,
+		payload:     payload,
+		index:       index,
+		offset:      offset,
+		blockLength: blockLength,
+	}
+	return &msg
 }
 
-func createUnchokeMessage() []byte {
-	return createSignalMessage(UnchokeMessageType)
-}
-
-func createSignalMessage(code MessageType) []byte {
-	message := new(bytes.Buffer)
-	binary.Write(message, binary.BigEndian, uint32(1))
-	binary.Write(message, binary.BigEndian, uint8(code))
-
-	return message.Bytes()
-}
-
-func createBitfieldMessage(b *bitset.BitSet) []byte {
-	message := new(bytes.Buffer)
-	binary.Write(message, binary.BigEndian, b.Len()+1)
-	binary.Write(message, binary.BigEndian, uint8(BitfieldMessageType))
-	binary.Write(message, binary.BigEndian, b.Bytes())
-
-	return message.Bytes()
-}
-
-func createHaveMessage(pieceIdx int) []byte {
-	message := new(bytes.Buffer)
-	binary.Write(message, binary.BigEndian, uint32(5))
-	binary.Write(message, binary.BigEndian, uint8(HaveMessageType))
-	binary.Write(message, binary.BigEndian, uint32(pieceIdx))
-
-	return message.Bytes()
-}
-
-func createCancelMessage(pieceIdx int) []byte {
-	message := new(bytes.Buffer)
-	binary.Write(message, binary.BigEndian, uint32(5))
-	binary.Write(message, binary.BigEndian, uint8(CancelMessageType))
-	binary.Write(message, binary.BigEndian, uint32(pieceIdx))
-
-	return message.Bytes()
-}
-
-func CreatePieceMessage(pieceIdx, beginOffset, blockLen uint32) []byte {
-	message := &bytes.Buffer{}
-	binary.Write(message, binary.BigEndian, uint32(13))
-	binary.Write(message, binary.BigEndian, uint8(RequestMessageType))
-	binary.Write(message, binary.BigEndian, pieceIdx)
-	binary.Write(message, binary.BigEndian, beginOffset)
-	binary.Write(message, binary.BigEndian, blockLen)
-
-	return message.Bytes()
+func writeBigEndian(dest io.Writer, data any) {
+	_ = binary.Write(dest, binary.BigEndian, data)
 }
