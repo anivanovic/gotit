@@ -69,8 +69,6 @@ func New(metainfo *bencode.Metainfo, downloadDir string, logger *zap.Logger) (*T
 		return nil, err
 	}
 	t.Pieces = pieces
-	t.requested = bitset.New(uint(t.PieceLength))
-	t.downloaded = bitset.New(uint(t.PieceLength))
 	t.numOfBlocks = t.PieceLength / int(BlockLength)
 	t.Hash = metainfo.Hash()
 
@@ -101,6 +99,8 @@ func New(metainfo *bencode.Metainfo, downloadDir string, logger *zap.Logger) (*T
 		t.Length = completeLength
 	}
 	t.PiecesNum = int(math.Ceil(float64(t.Length) / float64(t.PieceLength)))
+	t.requested = bitset.New(uint(t.PiecesNum))
+	t.downloaded = bitset.New(uint(t.PiecesNum))
 
 	if err := t.initDownloadDir(downloadDir); err != nil {
 		return nil, err
@@ -114,19 +114,19 @@ func (t *Torrent) SetDownloaded(pieceIndx uint) {
 }
 
 func (t *Torrent) Next(have *bitset.BitSet) (uint, bool) {
-	idx, found := uint(0), false
-
 	t.requestedMu.Lock()
 	defer t.requestedMu.Unlock()
-	for i, err := t.requested.NextClear(0); err; i, err = t.requested.NextClear(i) {
-		if have.Test(i) {
-			idx = i
-			found = true
-			t.requested.Set(i)
-			break
-		}
+
+	i, exists := t.requested.NextClear(0)
+	if !exists {
+		return 0, false
 	}
-	return idx, found
+	i, exists = have.NextSet(i)
+	if !exists {
+		return 0, false
+	}
+	t.requested.Set(i)
+	return i, true
 }
 
 func (t *Torrent) Done() bool {
@@ -161,7 +161,7 @@ func (t *Torrent) initDownloadDir(root string) error {
 	return nil
 }
 
-func (t Torrent) CheckPiece(data []byte, index int) bool {
+func (t *Torrent) CheckPiece(data []byte, index int) bool {
 	hasher := sha1.New()
 	hasher.Write(data)
 	hash := hasher.Sum(nil)
@@ -232,5 +232,5 @@ func (t *Torrent) Close() error {
 }
 
 func (t *Torrent) EmptyBitset() *bitset.BitSet {
-	return bitset.New(uint(t.PieceLength))
+	return bitset.New(uint(t.PiecesNum))
 }
