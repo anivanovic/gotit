@@ -60,22 +60,18 @@ type Status struct {
 	Valid      bool
 }
 
-func checkHandshake(handshake, hash, peerId []byte) bool {
+func isHandshakeValid(handshake, hash, peerId []byte) bool {
 	if len(handshake) < 68 {
 		return false
 	}
 
-	ressCode := handshake[0]
+	resCode := handshake[0]
 	protocolSignature := string(handshake[1:20])
-	reservedBytes := binary.BigEndian.Uint64(handshake[20:28])
 	sentHash := handshake[28:48]
-	sentPeerId := handshake[48:68]
 
-	return ressCode != 19 ||
-		protocolSignature != string(bittorrentProto[:]) ||
-		reservedBytes != 0 ||
-		!bytes.Equal(sentHash, hash) ||
-		!bytes.Equal(sentPeerId, peerId)
+	return resCode == 19 &&
+		protocolSignature == string(bittorrentProto[:]) &&
+		bytes.Equal(sentHash, hash)
 }
 
 func (p *Peer) createPieceMessage() *util.PeerMessage {
@@ -145,7 +141,7 @@ func (p *Peer) Announce(torrent *torrent.Torrent) error {
 		return err
 	}
 
-	if valid := checkHandshake(response, torrent.Hash, ClientId); !valid {
+	if valid := isHandshakeValid(response, torrent.Hash, ClientId); !valid {
 		return errors.New("peer handshake invalid")
 	}
 
