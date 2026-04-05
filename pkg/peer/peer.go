@@ -94,7 +94,7 @@ func newPeerStatus() *Status {
 
 func NewPeer(
 	ip netip.AddrPort,
-	torrent *torrent.Torrent,
+	t *torrent.Torrent,
 	piecesQueue *torrent.PiecesQueue,
 	writeCh chan<- *util.PeerMessage,
 	logger *zap.Logger,
@@ -108,10 +108,13 @@ func NewPeer(
 		lastMsgSent:  time.Now(),
 		logger:       logger.With(zap.String("ip", ip.String())),
 		blockIdx:     uint(0),
+		blockNum:     uint(t.PieceLength) / torrent.BlockLength,
 		piecesQueue:  piecesQueue,
 		writeCh:      writeCh,
-		piecesSource: torrent,
-		Bitset:       torrent.EmptyBitset(),
+		piecesSource: t,
+		pieceChecker: t,
+		torrent:      t,
+		Bitset:       t.EmptyBitset(),
 	}
 }
 

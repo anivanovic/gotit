@@ -3,6 +3,7 @@ package peer
 import (
 	"bytes"
 	"encoding/binary"
+	"net/netip"
 	"testing"
 
 	"github.com/anivanovic/gotit/pkg/torrent"
@@ -247,6 +248,30 @@ func TestHandlePeerMessage_Piece_InvalidHash_DropsMessage(t *testing.T) {
 	p.handlePeerMessage(util.NewPeerMessage(payload))
 
 	assert.Empty(t, ch)
+}
+
+// --- NewPeer -----------------------------------------------------------------
+
+func makeTestTorrent(pieceLength, piecesNum int) *torrent.Torrent {
+	return &torrent.Torrent{
+		PieceLength: pieceLength,
+		PiecesNum:   piecesNum,
+	}
+}
+
+func TestNewPeer_Initialization(t *testing.T) {
+	const piecesNum = 17
+	pieceLength := int(torrent.BlockLength) * 4
+	tor := makeTestTorrent(pieceLength, piecesNum)
+	ch := make(chan *util.PeerMessage, 1)
+
+	p := NewPeer(netip.MustParseAddrPort("127.0.0.1:6881"), tor, torrent.NewPiecesQueue(), ch, zap.NewNop())
+
+	assert.NotNil(t, p.pieceChecker, "pieceChecker nil — will panic on every received piece")
+	assert.NotNil(t, p.piecesSource, "piecesSource nil — no pieces will ever be requested")
+	assert.Equal(t, uint(0), p.blockIdx)
+	assert.Equal(t, uint(4), p.blockNum, "blockNum must equal PieceLength/BlockLength")
+	assert.Equal(t, uint(piecesNum), p.Bitset.Len(), "Bitset must have one bit per piece, not per data byte")
 }
 
 // --- nextRequestMessage ------------------------------------------------------
