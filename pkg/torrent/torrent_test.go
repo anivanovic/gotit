@@ -2,6 +2,7 @@ package torrent
 
 import (
 	"crypto/sha1"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,8 +11,11 @@ import (
 	"github.com/bits-and-blooms/bitset"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 
 	"github.com/anivanovic/gotit/pkg/bencode"
+	"github.com/anivanovic/gotit/pkg/stats"
+	"github.com/anivanovic/gotit/pkg/util"
 )
 
 func TestTorrent_createTorrentFiles(t *testing.T) {
@@ -71,6 +75,44 @@ func makeTorrent(piecesNum int) *Torrent {
 func sha1Of(data []byte) []byte {
 	h := sha1.Sum(data)
 	return h[:]
+}
+
+// makePieceMsg builds a PeerMessage of PieceMessageType carrying the given data.
+func makePieceMsg(index, offset uint32, data []byte) *util.PeerMessage {
+	payload := make([]byte, 1+4+4+len(data))
+	payload[0] = byte(util.PieceMessageType)
+	binary.BigEndian.PutUint32(payload[1:5], index)
+	binary.BigEndian.PutUint32(payload[5:9], offset)
+	copy(payload[9:], data)
+	return util.NewPeerMessage(payload)
+}
+
+// makeMultiFileTorrent creates a directory torrent with real temp files.
+func makeMultiFileTorrent(t *testing.T, dir string, files []bencode.TorrentFile, pieceLength int) *Torrent {
+	t.Helper()
+	tor := &Torrent{
+		IsDirectory:  true,
+		Name:         "multi",
+		PieceLength:  pieceLength,
+		TorrentFiles: files,
+		requested:    bitset.New(uint(len(files))),
+		downloaded:   bitset.New(uint(len(files))),
+		requestedMu:  &sync.Mutex{},
+		downloadedMu: &sync.Mutex{},
+		logger:       zap.NewNop(),
+	}
+	require.NoError(t, tor.initDownloadDir(dir))
+	t.Cleanup(func() { tor.Close() })
+	return tor
+}
+
+// readAt reads n bytes from f at the given offset.
+func readAt(t *testing.T, f *os.File, offset int64, n int) []byte {
+	t.Helper()
+	buf := make([]byte, n)
+	_, err := f.ReadAt(buf, offset)
+	require.NoError(t, err)
+	return buf
 }
 
 // --- EmptyBitset -------------------------------------------------------------
@@ -203,6 +245,19 @@ func TestNext_ReturnsNotFoundWhenAllRequested(t *testing.T) {
 	assert.False(t, found)
 }
 
+func TestNext_IteratesPastMultiplePiecesNotInPeerBitset(t *testing.T) {
+	// Peer has only the last piece. The loop must walk through pieces 0–3
+	// before finding piece 4. This validates the i+1 advancement in the loop.
+	tor := makeTorrent(5)
+	have := bitset.New(5)
+	have.Set(4)
+
+	idx, found := tor.Next(have)
+	require.True(t, found)
+	assert.Equal(t, uint(4), idx)
+	assert.True(t, tor.requested.Test(4))
+}
+
 func TestNext_ZeroBitsetNeverFindsAPiece(t *testing.T) {
 	// Documents the ordering bug: when PiecesNum=0 at bitset init time,
 	// the requested bitset has size 0, NextClear finds nothing, and Next()
@@ -247,4 +302,97 @@ func TestCheckPiece_EmptyData(t *testing.T) {
 
 	tor := &Torrent{Pieces: pieces}
 	assert.True(t, tor.CheckPiece(data, 0))
+}
+
+// --- WritePiece --------------------------------------------------------------
+
+func TestWritePiece_SingleFile_WritesDataAtOffset(t *testing.T) {
+	dir := t.TempDir()
+	data := []byte("hello torrent")
+
+	tor := &Torrent{
+		IsDirectory:  false,
+		Name:         "single.bin",
+		PieceLength:  100,
+		requested:    bitset.New(1),
+		downloaded:   bitset.New(1),
+		requestedMu:  &sync.Mutex{},
+		downloadedMu: &sync.Mutex{},
+		logger:       zap.NewNop(),
+	}
+	require.NoError(t, tor.initDownloadDir(dir))
+	t.Cleanup(func() { tor.Close() })
+
+	ch := make(chan *util.PeerMessage, 1)
+	ch <- makePieceMsg(0, 0, data)
+	close(ch)
+
+	tor.WritePiece(ch, stats.NewStats(0))
+
+	got := readAt(t, tor.OsFiles[0], 0, len(data))
+	assert.Equal(t, data, got)
+}
+
+func TestWritePiece_MultiFile_PieceFitsInFirstFile(t *testing.T) {
+	dir := t.TempDir()
+	data := []byte("fits")
+
+	tor := makeMultiFileTorrent(t, dir, []bencode.TorrentFile{
+		{Path: []string{"a.bin"}, Length: 10},
+		{Path: []string{"b.bin"}, Length: 10},
+	}, 10)
+
+	ch := make(chan *util.PeerMessage, 1)
+	ch <- makePieceMsg(0, 0, data) // piecePoss = 0; file a has 10 bytes free
+	close(ch)
+
+	tor.WritePiece(ch, stats.NewStats(0))
+
+	assert.Equal(t, data, readAt(t, tor.OsFiles[0], 0, len(data)))
+	// second file untouched — verify it's still empty
+	info, err := tor.OsFiles[1].Stat()
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), info.Size())
+}
+
+func TestWritePiece_MultiFile_PieceInSecondFile(t *testing.T) {
+	// Piece index 1 with PieceLength=5 → piecePoss = 5.
+	// Loop: file a (length 5) is NOT > 5 → subtract → piecePoss = 0.
+	// Loop: file b (length 10) IS > 0 → break, write to b at offset 0.
+	dir := t.TempDir()
+	data := []byte("bbb")
+
+	tor := makeMultiFileTorrent(t, dir, []bencode.TorrentFile{
+		{Path: []string{"a.bin"}, Length: 5},
+		{Path: []string{"b.bin"}, Length: 10},
+	}, 5)
+
+	ch := make(chan *util.PeerMessage, 1)
+	ch <- makePieceMsg(1, 0, data)
+	close(ch)
+
+	tor.WritePiece(ch, stats.NewStats(0))
+
+	assert.Equal(t, data, readAt(t, tor.OsFiles[1], 0, len(data)))
+}
+
+func TestWritePiece_MultiFile_PieceSpansTwoFiles(t *testing.T) {
+	// piecePoss=0, file a has 5 bytes, piece data is 8 bytes.
+	// First 5 bytes go to file a, remaining 3 bytes go to file b at offset 0.
+	dir := t.TempDir()
+	data := []byte("12345678") // 8 bytes
+
+	tor := makeMultiFileTorrent(t, dir, []bencode.TorrentFile{
+		{Path: []string{"a.bin"}, Length: 5},
+		{Path: []string{"b.bin"}, Length: 10},
+	}, 15)
+
+	ch := make(chan *util.PeerMessage, 1)
+	ch <- makePieceMsg(0, 0, data)
+	close(ch)
+
+	tor.WritePiece(ch, stats.NewStats(0))
+
+	assert.Equal(t, data[:5], readAt(t, tor.OsFiles[0], 0, 5), "first 5 bytes in file a")
+	assert.Equal(t, data[5:], readAt(t, tor.OsFiles[1], 0, 3), "remaining 3 bytes in file b")
 }
