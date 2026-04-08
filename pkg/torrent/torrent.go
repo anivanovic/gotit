@@ -171,72 +171,11 @@ func (t *Torrent) CheckPiece(data []byte, index int) bool {
 }
 
 func (t *Torrent) WritePiece(piecesCh <-chan *util.PeerMessage, stats *stats.Stats) {
-	writeFunc := func(msg *util.PeerMessage, piecePoss int) error {
-		file := t.OsFiles[0]
-		_, err := file.WriteAt(msg.Data(), int64(piecePoss))
-
-		return err
-	}
-
-	if t.IsDirectory {
-		writeFunc = func(msg *util.PeerMessage, piecePoss int) error {
-			var f *os.File
-			var torFile bencode.TorrentFile
-			var i int
-
-			for i = 0; i < len(t.TorrentFiles); i++ {
-				tFile := t.TorrentFiles[i]
-				torFile = t.TorrentFiles[i]
-				f = t.OsFiles[i]
-
-				if tFile.Length > piecePoss {
-					break
-				}
-
-				piecePoss -= tFile.Length
-			}
-
-			t.logger.Debug("Writing to file ",
-				zap.String("file", torFile.Path[0]),
-				zap.Int("position", piecePoss))
-
-			pieceLen := len(msg.Data())
-			unoccupiedLength := torFile.Length - piecePoss
-
-			if unoccupiedLength >= pieceLen {
-				_, err := f.WriteAt(msg.Data(), int64(piecePoss))
-				if err != nil {
-					return err
-				}
-			} else {
-				_, err := f.WriteAt(msg.Data()[:unoccupiedLength], int64(piecePoss))
-				if err != nil {
-					return err
-				}
-
-				piecePoss = 0
-				i += 1
-				if i == len(t.TorrentFiles) {
-					return errors.New("wrong number of torrent files")
-				}
-				f = t.OsFiles[i]
-				torFile = t.TorrentFiles[i]
-
-				_, err = f.WriteAt(msg.Data()[unoccupiedLength:], int64(piecePoss))
-				if err != nil {
-					return err
-				}
-			}
-
-			return nil
-		}
-	}
-
 	for msg := range piecesCh {
 		piecePoss := int(msg.Index())*t.PieceLength + int(msg.Offset())
 		stats.AddDownload(uint64(len(msg.Data())))
 
-		if err := writeFunc(msg, piecePoss); err != nil {
+		if err := t.writePieceData(msg.Data(), piecePoss); err != nil {
 			t.logger.Error("Failed to write piece",
 				zap.Int("index", int(msg.Index())),
 				zap.Int("offset", int(msg.Offset())),
@@ -244,13 +183,62 @@ func (t *Torrent) WritePiece(piecesCh <-chan *util.PeerMessage, stats *stats.Sta
 			continue
 		}
 
-		// mark piece downloaded only after writing successfully
-		if (int(msg.Offset()) + int(BlockLength)) == t.PieceLength {
+		if int(msg.Offset())+len(msg.Data()) == t.PieceLength {
 			t.SetDownloaded(uint(msg.Index()))
 		}
 	}
 
 	t.logger.Debug("Finished writing pieces")
+}
+
+// writePieceData writes data at the given absolute torrent byte position,
+// spanning across multiple files as needed.
+func (t *Torrent) writePieceData(data []byte, piecePoss int) error {
+	if !t.IsDirectory {
+		_, err := t.OsFiles[0].WriteAt(data, int64(piecePoss))
+		return err
+	}
+
+	// Find the file where piece should be written to.
+	fileIdx := 0
+	for fileIdx < len(t.TorrentFiles) {
+		if t.TorrentFiles[fileIdx].Length > piecePoss {
+			break
+		}
+		piecePoss -= t.TorrentFiles[fileIdx].Length
+		fileIdx++
+	}
+	if fileIdx >= len(t.TorrentFiles) {
+		return errors.New("piece position beyond all torrent files")
+	}
+
+	// Write data, advancing to the next file whenever the current one is full.
+	for len(data) > 0 {
+		if fileIdx >= len(t.TorrentFiles) {
+			return errors.New("data extends beyond torrent files")
+		}
+
+		available := t.TorrentFiles[fileIdx].Length - piecePoss
+		toWrite := len(data)
+		if toWrite > available {
+			toWrite = available
+		}
+
+		t.logger.Debug("Writing to file",
+			zap.String("file", t.TorrentFiles[fileIdx].Path[0]),
+			zap.Int("position", piecePoss),
+			zap.Int("bytes", toWrite))
+
+		if _, err := t.OsFiles[fileIdx].WriteAt(data[:toWrite], int64(piecePoss)); err != nil {
+			return err
+		}
+
+		data = data[toWrite:]
+		piecePoss = 0
+		fileIdx++
+	}
+
+	return nil
 }
 
 func (t *Torrent) BlockNum() int {

@@ -376,6 +376,28 @@ func TestWritePiece_MultiFile_PieceInSecondFile(t *testing.T) {
 	assert.Equal(t, data, readAt(t, tor.OsFiles[1], 0, len(data)))
 }
 
+func TestWritePiece_MultiFile_PieceSpansThreeFiles(t *testing.T) {
+	// Data of 9 bytes distributed across three 3-byte files.
+	dir := t.TempDir()
+	data := []byte("abcdefghi") // 9 bytes
+
+	tor := makeMultiFileTorrent(t, dir, []bencode.TorrentFile{
+		{Path: []string{"a.bin"}, Length: 3},
+		{Path: []string{"b.bin"}, Length: 3},
+		{Path: []string{"c.bin"}, Length: 3},
+	}, 9)
+
+	ch := make(chan *util.PeerMessage, 1)
+	ch <- makePieceMsg(0, 0, data)
+	close(ch)
+
+	tor.WritePiece(ch, stats.NewStats(0))
+
+	assert.Equal(t, data[0:3], readAt(t, tor.OsFiles[0], 0, 3))
+	assert.Equal(t, data[3:6], readAt(t, tor.OsFiles[1], 0, 3))
+	assert.Equal(t, data[6:9], readAt(t, tor.OsFiles[2], 0, 3))
+}
+
 func TestWritePiece_MultiFile_PieceSpansTwoFiles(t *testing.T) {
 	// piecePoss=0, file a has 5 bytes, piece data is 8 bytes.
 	// First 5 bytes go to file a, remaining 3 bytes go to file b at offset 0.
@@ -395,4 +417,34 @@ func TestWritePiece_MultiFile_PieceSpansTwoFiles(t *testing.T) {
 
 	assert.Equal(t, data[:5], readAt(t, tor.OsFiles[0], 0, 5), "first 5 bytes in file a")
 	assert.Equal(t, data[5:], readAt(t, tor.OsFiles[1], 0, 3), "remaining 3 bytes in file b")
+}
+
+func TestWritePiece_MarksDownloadedOnLastBlock(t *testing.T) {
+	// The last piece of a torrent has a smaller final block.
+	// SetDownloaded must fire when offset+len(data)==PieceLength, not offset+BlockLength.
+	dir := t.TempDir()
+	pieceLength := 10
+	lastBlockData := []byte("end") // 3 bytes; offset 7 + 3 = pieceLength (10)
+
+	tor := &Torrent{
+		IsDirectory:  false,
+		Name:         "last.bin",
+		PieceLength:  pieceLength,
+		PiecesNum:    1,
+		requested:    bitset.New(1),
+		downloaded:   bitset.New(1),
+		requestedMu:  &sync.Mutex{},
+		downloadedMu: &sync.Mutex{},
+		logger:       zap.NewNop(),
+	}
+	require.NoError(t, tor.initDownloadDir(dir))
+	t.Cleanup(func() { tor.Close() })
+
+	ch := make(chan *util.PeerMessage, 1)
+	ch <- makePieceMsg(0, uint32(pieceLength-len(lastBlockData)), lastBlockData)
+	close(ch)
+
+	tor.WritePiece(ch, stats.NewStats(0))
+
+	assert.True(t, tor.downloaded.Test(0), "piece 0 should be marked downloaded after last block")
 }
