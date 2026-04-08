@@ -16,8 +16,6 @@ const (
 	DialTimeout    = time.Second * 2
 )
 
-var before = time.Unix(1, 0)
-
 type TimeoutConn struct {
 	// Underlying TCP/UDP connection.
 	c net.Conn
@@ -42,6 +40,9 @@ func NewTimeoutConn(network, address string, timeout time.Duration) (*TimeoutCon
 // ReadPeerMessage reads whole peer message from socket.
 // Read deadline is set to timeoutConn.timeout
 func (c *TimeoutConn) ReadPeerMessage() ([]byte, error) {
+	if err := c.setReadDeadline(); err != nil {
+		return nil, err
+	}
 	size, err := c.readPeerMessageSize()
 	if err != nil {
 		return nil, err
@@ -64,32 +65,41 @@ func (c *TimeoutConn) readPeerMessageSize() (int, error) {
 // ReadPeerHandshake reads peer handshake message from socket.
 // Read deadline is set to timeoutConn.timeout
 func (c *TimeoutConn) ReadPeerHandshake() ([]byte, error) {
+	if err := c.setReadDeadline(); err != nil {
+		return nil, err
+	}
 	return c.readExactly(68)
 }
 
-// Write writes data to socket.
-// Write deadline is set to timeoutConn.timeout
 func (c *TimeoutConn) WriteMsg(msg *util.PeerMessage) (int, error) {
-	c.setWriteDeadline()
+	if err := c.setWriteDeadline(); err != nil {
+		return 0, err
+	}
 	return msg.Send(c.c)
 }
 
 func (c *TimeoutConn) Write(data []byte) (int, error) {
-	c.setWriteDeadline()
+	if err := c.setWriteDeadline(); err != nil {
+		return 0, err
+	}
 	return c.c.Write(data)
 }
 
 // ReadAll reads from socket until error is thrown or EOF.
 // Read deadline is set to timeoutConn.timeout
 func (c *TimeoutConn) ReadAll() ([]byte, error) {
-	c.setReadDeadline()
+	if err := c.setReadDeadline(); err != nil {
+		return nil, err
+	}
 	return io.ReadAll(c.c)
 }
 
 // ReadUdpHandshake reads udp tracker handshake from socket.
 // Read deadline is set to timeoutConn.timeout
 func (c *TimeoutConn) ReadUdpHandshake() ([]byte, error) {
-	c.c.Close()
+	if err := c.setReadDeadline(); err != nil {
+		return nil, err
+	}
 	return c.readExactly(16)
 }
 
@@ -99,17 +109,16 @@ func (c *TimeoutConn) Close() error {
 
 func (c *TimeoutConn) readExactly(len int) ([]byte, error) {
 	buf := make([]byte, len)
-	c.setReadDeadline()
 	if _, err := io.ReadFull(c.c, buf); err != nil {
 		return nil, err
 	}
 	return buf, nil
 }
 
-func (c *TimeoutConn) setReadDeadline() {
-	c.c.SetReadDeadline(time.Now().Add(c.timeout))
+func (c *TimeoutConn) setReadDeadline() error {
+	return c.c.SetReadDeadline(time.Now().Add(c.timeout))
 }
 
-func (c *TimeoutConn) setWriteDeadline() {
-	c.c.SetWriteDeadline(time.Now().Add(c.timeout))
+func (c *TimeoutConn) setWriteDeadline() error {
+	return c.c.SetWriteDeadline(time.Now().Add(c.timeout))
 }

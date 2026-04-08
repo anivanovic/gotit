@@ -13,6 +13,7 @@ import (
 	"github.com/anivanovic/gotit/pkg/gotitnet"
 	"github.com/anivanovic/gotit/pkg/torrent"
 	"github.com/anivanovic/gotit/pkg/util"
+	"github.com/jpillora/backoff"
 
 	"github.com/bits-and-blooms/bitset"
 	"go.uber.org/zap"
@@ -152,6 +153,15 @@ func (p *Peer) Announce(torrent *torrent.Torrent) error {
 	return nil
 }
 
+func newDefaultBackoff() *backoff.Backoff {
+	return &backoff.Backoff{
+		Min:    100 * time.Millisecond,
+		Max:    30 * time.Second,
+		Factor: 2,
+		Jitter: true,
+	}
+}
+
 // Run communicates with remote peer and downloads torrent pieces.
 func (p *Peer) Run(ctx context.Context) {
 	var requestMsg *util.PeerMessage
@@ -160,22 +170,42 @@ func (p *Peer) Run(ctx context.Context) {
 	p.SendInterested()
 	p.SendUnchoke()
 
+	b := newDefaultBackoff()
+
 	for {
+		if err := ctx.Err(); err != nil {
+			p.logger.Debug("peer: context canceled", zap.Error(err))
+			return
+		}
+
 		if !p.ClientStatus.Choked && !sentPieceMsg {
 			requestMsg = p.nextRequestMessage()
 			if requestMsg == nil {
-				time.Sleep(time.Second * 2)
+				select {
+				case <-time.After(time.Second * 2):
+				case <-ctx.Done():
+					p.logger.Debug("peer: context canceled", zap.Error(ctx.Err()))
+					return
+				}
 				continue
 			}
 
 			if _, err := p.sendMessage(requestMsg); err != nil {
-				p.logger.
-					Debug("error sending piece. sleeping 5 seconds",
-						zap.Error(err))
 				p.piecesQueue.RequestFailed(requestMsg)
+				d := b.Duration()
+				p.logger.Warn("Error requesting piece. Retrying",
+					zap.Duration("backoff", d),
+					zap.Error(err))
+				select {
+				case <-time.After(d):
+				case <-ctx.Done():
+					p.logger.Debug("peer: context canceled", zap.Error(ctx.Err()))
+					return
+				}
 				continue
 			}
 
+			b.Reset()
 			sentPieceMsg = true
 		}
 
@@ -185,9 +215,17 @@ func (p *Peer) Run(ctx context.Context) {
 				p.piecesQueue.RequestFailed(requestMsg)
 				sentPieceMsg = false
 			}
+			d := b.Duration()
+			select {
+			case <-time.After(d):
+			case <-ctx.Done():
+				p.logger.Debug("peer: context canceled", zap.Error(ctx.Err()))
+				return
+			}
 
 			continue
 		}
+		b.Reset()
 
 		p.handlePeerMessage(util.NewPeerMessage(response))
 	}
