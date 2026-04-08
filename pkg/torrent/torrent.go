@@ -111,6 +111,9 @@ func New(metainfo *bencode.Metainfo, downloadDir string, logger *zap.Logger) (*T
 }
 
 func (t *Torrent) SetDownloaded(pieceIndx uint) {
+	t.downloadedMu.Lock()
+	defer t.downloadedMu.Unlock()
+
 	t.downloaded.Set(pieceIndx)
 }
 
