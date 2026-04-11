@@ -123,25 +123,13 @@ func (m PeerMessage) Bitfield() *bitset.BitSet {
 }
 
 func createBitset(payload []byte) *bitset.BitSet {
-	set := make([]uint64, 0)
-	i := 0
-	lenPayload := len(payload)
-	for i+8 < lenPayload {
-		data := binary.BigEndian.Uint64(payload[i : i+8])
-		set = append(set, data)
-		i += 8
+	if rem := len(payload) % 8; rem != 0 {
+		payload = append(payload, make([]byte, 8-rem)...)
 	}
-	if i < lenPayload {
-		n := lenPayload - i
-		missing := 8 - n
-		data := payload[i:lenPayload]
-		for i := 0; i < missing; i++ {
-			data = append(data, 0)
-		}
-		last := binary.BigEndian.Uint64(data)
-		set = append(set, last)
+	set := make([]uint64, len(payload)/8)
+	for i := range set {
+		set[i] = binary.BigEndian.Uint64(payload[i*8 : i*8+8])
 	}
-
 	return bitset.From(set)
 }
 
