@@ -62,6 +62,7 @@ func NewPeerMessage(data []byte) *PeerMessage {
 	}
 	data = msg.payload
 
+	// set additional message data for these message types
 	switch msg.Type {
 	case HaveMessageType:
 		msg.index = binary.BigEndian.Uint32(data[:4])
@@ -72,7 +73,6 @@ func NewPeerMessage(data []byte) *PeerMessage {
 	case PieceMessageType:
 		msg.index = binary.BigEndian.Uint32(msg.payload[:4])
 		msg.offset = binary.BigEndian.Uint32(msg.payload[4:8])
-
 	default:
 		// no op
 	}

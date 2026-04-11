@@ -162,31 +162,88 @@ func newDefaultBackoff() *backoff.Backoff {
 	}
 }
 
+func (p *Peer) unchoke(ctx context.Context) error {
+	b := newDefaultBackoff()
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		if err := p.SendInterested(); err != nil {
+			d := b.Duration()
+			p.logger.Warn("peer: failed to send interested message. retrying",
+				zap.Duration("backoff", d),
+				zap.Error(err))
+			if wait(ctx, d) != nil {
+				return ctx.Err()
+			}
+			continue
+		}
+
+		message, err := p.conn.ReadPeerMessage()
+		if err != nil {
+			d := b.Duration()
+			p.logger.Warn("peer: error reading peer message. retrying",
+				zap.Duration("backoff", d),
+				zap.Error(err))
+			if wait(ctx, d) != nil {
+				return ctx.Err()
+			}
+			continue
+		}
+
+		peerMessage := util.NewPeerMessage(message)
+		p.handlePeerMessage(peerMessage)
+
+		return nil
+	}
+}
+
+func wait(ctx context.Context, sleepDuration time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(sleepDuration):
+		return nil
+	}
+}
+
 // Run communicates with remote peer and downloads torrent pieces.
 func (p *Peer) Run(ctx context.Context) {
 	var requestMsg *util.PeerMessage
 	sentPieceMsg := false
 
-	p.SendInterested()
-	p.SendUnchoke()
-
-	b := newDefaultBackoff()
-
 	for {
+		// check if canceled
 		if err := ctx.Err(); err != nil {
 			p.logger.Debug("peer: context canceled", zap.Error(err))
 			return
 		}
 
-		if !p.ClientStatus.Choked && !sentPieceMsg {
+		if p.torrent.Done() {
+			return
+		}
+
+		if err := p.checkKeepAlive(); err != nil {
+			p.logger.Debug("peer: failed to check keepalive", zap.Error(err))
+			return
+		}
+
+		if p.ClientStatus.Choked {
+			if err := p.unchoke(ctx); err != nil {
+				p.logger.Warn("peer: failed to unchoke peer", zap.Error(err))
+				return
+			}
+		}
+
+		b := newDefaultBackoff()
+		if !p.ClientStatus.Choked && p.ClientStatus.Interested && !sentPieceMsg {
 			requestMsg = p.nextRequestMessage()
 			if requestMsg == nil {
-				select {
-				case <-time.After(time.Second * 2):
-				case <-ctx.Done():
-					p.logger.Debug("peer: context canceled", zap.Error(ctx.Err()))
+				if err := wait(ctx, time.Second*2); err != nil {
 					return
 				}
+
 				continue
 			}
 
@@ -196,10 +253,7 @@ func (p *Peer) Run(ctx context.Context) {
 				p.logger.Warn("Error requesting piece. Retrying",
 					zap.Duration("backoff", d),
 					zap.Error(err))
-				select {
-				case <-time.After(d):
-				case <-ctx.Done():
-					p.logger.Debug("peer: context canceled", zap.Error(ctx.Err()))
+				if err := wait(ctx, d); err != nil {
 					return
 				}
 				continue
@@ -216,13 +270,9 @@ func (p *Peer) Run(ctx context.Context) {
 				sentPieceMsg = false
 			}
 			d := b.Duration()
-			select {
-			case <-time.After(d):
-			case <-ctx.Done():
-				p.logger.Debug("peer: context canceled", zap.Error(ctx.Err()))
+			if err := wait(ctx, d); err != nil {
 				return
 			}
-
 			continue
 		}
 		b.Reset()
@@ -256,12 +306,16 @@ func (p *Peer) Close() error {
 	return p.conn.Close()
 }
 
-func (p *Peer) checkKeepAlive() {
+func (p *Peer) checkKeepAlive() error {
 	if time.Since(p.lastMsgSent).Minutes() >= 1.9 {
 		p.logger.Debug("Sending keep alive message")
-		p.sendMessage(util.KeepalivePeerMessage)
+		if _, err := p.sendMessage(util.KeepalivePeerMessage); err != nil {
+			return err
+		}
 		p.updateLastMsgSent()
 	}
+
+	return nil
 }
 
 func (p *Peer) updateLastMsgSent() {
@@ -318,36 +372,33 @@ func (p *Peer) send(data []byte) (int, error) {
 	return p.conn.Write(data)
 }
 
-func (p *Peer) SendUnchoke() {
+func (p *Peer) SendUnchoke() error {
 	if !p.PeerStatus.Interested {
-		return
+		return nil
 	}
 
 	if _, err := p.sendMessage(util.CreateUnchokeMessage()); err != nil {
-		return
+		return err
 	}
+
 	p.PeerStatus.Choked = false
+	return nil
 }
 
-func (p *Peer) SendInterested() {
-	p.sendMessage(util.CreateInterestedMessage())
+func (p *Peer) SendInterested() error {
+	_, err := p.sendMessage(util.CreateInterestedMessage())
+	return err
 }
 
 func (p *Peer) handlePieceMessage(message *util.PeerMessage) {
 	if !p.pieceChecker.CheckPiece(message.Data(), int(message.Index())) {
-		p.logger.Error("Discarding corrupted piece. Sha1 check failed.", zap.Uint32("index", message.Index()))
+		p.logger.Warn("Discarding corrupted piece. Sha1 check failed.",
+			zap.Uint32("index", message.Index()))
 		return
 	}
 
 	p.writeCh <- message
 	p.Bitset.Set(uint(message.Index()))
-}
-
-func sleep(ctx context.Context, duration time.Duration) {
-	select {
-	case <-ctx.Done():
-	case <-time.After(duration):
-	}
 }
 
 func createHandshake(hash []byte) []byte {
